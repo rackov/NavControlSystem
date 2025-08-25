@@ -1,4 +1,4 @@
-module github.com/rackov/NavControlSystem/pkg
+module github.com/rackov/NavControlSystem/pkg/logger
 
 go 1.23.12
 
