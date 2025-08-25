@@ -1,4 +1,4 @@
-module github.com/rackov/NavControlSystem/pkg/nats
+module github.com/rackov/NavControlSystem/pkg/tnats
 
 go 1.23.12
 

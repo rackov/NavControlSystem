@@ -82,12 +82,12 @@ func NewClient(url string, logger *logrus.Logger) (*Client, error) {
 }
 
 // Close закрывает соединение с NATS.
-func (c *Client) Close() {
+func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.closed {
-		return
+		return nil
 	}
 
 	if c.conn != nil {
@@ -95,6 +95,7 @@ func (c *Client) Close() {
 	}
 	c.closed = true
 	c.logger.Info("NATS client connection closed")
+	return nil
 }
 
 // IsConnected проверяет, активно ли соединение.
