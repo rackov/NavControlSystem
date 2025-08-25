@@ -42,15 +42,15 @@ func main() {
 	// Пример публикации данных
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				data := []byte("sample navigation data")
-				err := publisher.Publish("nav.data.raw", data)
-				if err != nil {
-					appLogger.WithError(err).Error("Example publish failed")
-				}
+		defer ticker.Stop() // Этот вызов остановит тикер и закроет ticker.C
+
+		// Используем идиоматичный цикл for range.
+		// Цикл будет автоматически прерван, когда ticker.C будет закрыт (вызовом ticker.Stop()).
+		for range ticker.C {
+			data := []byte("sample navigation data")
+			err := publisher.Publish("nav.data.raw", data)
+			if err != nil {
+				appLogger.WithError(err).Error("Example publish failed")
 			}
 		}
 	}()
