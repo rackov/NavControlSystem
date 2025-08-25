@@ -41,10 +41,6 @@ func (ser *Server) Stop() error {
 }
 func (ser *Server) Run() {
 
-	if _, err := os.Stat("logs"); os.IsNotExist(err) {
-		os.Mkdir("logs", 0755)
-	}
-
 	ser.log = logger.GetLogger()
 
 	var err error
@@ -64,7 +60,6 @@ func (ser *Server) Run() {
 		sc.id = 0
 
 		sc.log = ser.log
-		// sc.log.SetLevel(logrus.DebugLevel)
 
 		if err != nil {
 			ser.log.WithField("err", err).Errorf("Ошибка соединения")

@@ -19,6 +19,10 @@ var (
 	once        sync.Once
 )
 
+// if _, err := os.Stat("logs"); os.IsNotExist(err) {
+// 	os.Mkdir("logs", 0755)
+// }
+
 // GetLogger возвращает экземпляр логгера (синглтон).
 func GetLogger() *logrus.Logger {
 	once.Do(func() {
