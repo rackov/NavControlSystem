@@ -1,6 +1,7 @@
 // NavControlSystem/pkg/nats/tnats.go
 package tnats
 
+/*
 import (
 	"errors"
 	"fmt"
@@ -27,10 +28,10 @@ type Client struct {
 }
 
 // Publisher - это интерфейс для публикации сообщений.
-type Publisher interface {
-	Publish(subject string, data []byte) error
-	Close() error
-}
+// type Publisher interface {
+// 	Publish(subject string, data []byte) error
+// 	Close() error
+// }
 
 // Subscriber - это интерфейс для подписки на сообщения.
 type Subscriber interface {
@@ -188,3 +189,4 @@ func (c *Client) QueueSubscribe(subject, queue string, handler nats.MsgHandler) 
 	}).Info("Successfully queue subscribed to subject")
 	return sub, nil
 }
+*/
