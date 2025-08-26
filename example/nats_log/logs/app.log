@@ -5,3 +5,9 @@
 {"level":"info","msg":"Receiver service started successfully","time":"2025-08-26 11:36:34.589"}
 {"level":"info","msg":"Shutting down receiver service...","time":"2025-08-26 11:37:24.390"}
 {"level":"info","msg":"NATS client connection closed","time":"2025-08-26 11:37:24.390"}
+{"level":"info","msg":"Successfully connected to NATS","time":"2025-08-26 11:58:32.333"}
+{"level":"info","msg":"Successfully subscribed to subject","queue":"","subject":"nav.commands.device123","time":"2025-08-26 11:58:32.333"}
+{"level":"info","msg":"Receiver service started successfully","time":"2025-08-26 11:58:32.333"}
+{"level":"info","msg":"Shutting down receiver service...","time":"2025-08-26 11:58:41.327"}
+{"level":"info","msg":"NATS client connection closed","time":"2025-08-26 11:58:41.327"}
+{"error":null,"level":"warning","msg":"NATS connection disconnected","time":"2025-08-26 11:58:41.327"}

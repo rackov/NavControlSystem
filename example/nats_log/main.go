@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	"github.com/rackov/NavControlSystem/pkg/logger" // Предполагаем, что у нас есть pkg/logger
-	"github.com/rackov/NavControlSystem/pkg/tnats"
+	"github.com/rackov/NavControlSystem/pkg/logger" // Импортируем логгер
+	"github.com/rackov/NavControlSystem/pkg/tnats"  // Импортируем NATS-клиент
 	"github.com/sirupsen/logrus"
 )
 
