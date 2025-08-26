@@ -1,0 +1,7 @@
+{"error":"failed to connect to NATS: dial tcp: lookup nats on 127.0.0.53:53: server misbehaving","level":"fatal","msg":"Failed to initialize NATS client","time":"2025-08-26 10:51:18.244"}
+{"error":"failed to connect to NATS: dial tcp: lookup nats: i/o timeout","level":"fatal","msg":"Failed to initialize NATS client","time":"2025-08-26 11:35:18.009"}
+{"level":"info","msg":"Successfully connected to NATS","time":"2025-08-26 11:36:34.589"}
+{"level":"info","msg":"Successfully subscribed to subject","queue":"","subject":"nav.commands.device123","time":"2025-08-26 11:36:34.589"}
+{"level":"info","msg":"Receiver service started successfully","time":"2025-08-26 11:36:34.589"}
+{"level":"info","msg":"Shutting down receiver service...","time":"2025-08-26 11:37:24.390"}
+{"level":"info","msg":"NATS client connection closed","time":"2025-08-26 11:37:24.390"}

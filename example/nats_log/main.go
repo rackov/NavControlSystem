@@ -18,7 +18,7 @@ func main() {
 	appLogger := logger.GetLogger()
 
 	// 2. Инициализация NATS клиента
-	natsURL := "nats://nats:4222" // Из конфига
+	natsURL := "nats://localhost:4222" // Из конфига
 	natsClient, err := tnats.NewClient(natsURL, appLogger)
 	if err != nil {
 		appLogger.WithError(err).Fatal("Failed to initialize NATS client")
