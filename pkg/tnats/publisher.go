@@ -5,8 +5,9 @@ import (
 	"log"
 	"time"
 
-	"github.com/nats-io/nats.go"
 	"github.com/rackov/NavControlSystem/pkg/models"
+
+	"github.com/nats-io/nats.go"
 )
 
 // Publisher - это интерфейс для публикации сообщений.

@@ -2,10 +2,7 @@ module github.com/rackov/NavControlSystem/pkg/tnats
 
 go 1.23.12
 
-require (
-	github.com/nats-io/nats.go v1.45.0
-	github.com/sirupsen/logrus v1.9.3
-)
+require github.com/nats-io/nats.go v1.45.0
 
 require (
 	github.com/klauspost/compress v1.18.0 // indirect

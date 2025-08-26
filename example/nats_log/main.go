@@ -1,6 +1,7 @@
 // NavControlSystem/services/receiver/cmd/main.go
 package main
 
+/*
 import (
 	"os"
 	"os/signal"
@@ -78,3 +79,4 @@ func main() {
 	// Здесь можно добавить логику для остановки горутин и завершения активных задач
 	// natsClient.Close() вызовется благодаря defer
 }
+*/
