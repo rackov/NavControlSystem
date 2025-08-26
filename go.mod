@@ -1,6 +1,7 @@
 module github.com/rackov/NavControlSystem
 
-go 1.24.6
+go 1.23.12
+
 
 replace github.com/rackov/NavControlSystem/pkg/logger => ./pkg/logger
 replace github.com/rackov/NavControlSystem/pkg/tnats => ./pkg/tnats
