@@ -9,20 +9,19 @@ import (
 	"time"
 
 	"github.com/rackov/NavControlSystem/pkg/logger"
-	"github.com/sirupsen/logrus"
 )
 
 type Server struct {
 	listen net.Listener
 	Addr   string
 	// logger        chan []byte
-	log  *logrus.Logger
+	log  *logger.Logger
 	file *os.File
 }
 type ConServer struct {
 	conn          net.Conn
 	authorization bool
-	log           *logrus.Logger
+	log           *logger.Logger
 	// cursor        int
 	id     int // номер принятого пакета, если пакет отправлен то =0
 	ImeiId uint64
@@ -41,7 +40,7 @@ func (ser *Server) Stop() error {
 }
 func (ser *Server) Run() {
 
-	ser.log = logger.GetLogger()
+	ser.log = logger.New(logger.INFO, "server.log")
 
 	var err error
 

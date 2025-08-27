@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package monitoring;
+
+option go_package = "NavControlSystem/pkg/monitoring";
+
+// PrometheusMetrics определяет стандартный набор метрик,
+// который будет экспортировать каждый сервис.
+message PrometheusMetrics {
+  // Счетчик общего количества обработанных запросов/событий.
+  // Например, для RECEIVER это будет количество принятых пакетов.
+  // Для WRITER - количество записанных в БД записей.
+  message OperationCounter {
+    string operation_name = 1; // Имя операции: "packets_received", "records_written"
+    uint64 count = 2;
+  }
+  repeated OperationCounter operation_counters = 1;
+
+  // Гистограмма для измерения времени обработки операций.
+  message OperationDuration {
+    string operation_name = 1;
+    // В Prometheus гистограмма сама хранит buckets, поэтому здесь мы просто обновляем ее
+  }
+  repeated OperationDuration operation_durations = 2;
+
+  // Счетчик ошибок по типам.
+  message ErrorCounter {
+    string error_type = 1; // Тип ошибки: "nats_connection_failed", "db_timeout"
+    uint64 count = 2;
+  }
+  repeated ErrorCounter error_counters = 3;
+
+  // Gauge для отображения текущего состояния сервиса.
+  // Например, количество активных соединений для RECEIVER.
+  message ServiceGauge {
+    string gauge_name = 1; // Имя gauge: "active_connections", "queue_size"
+    double value = 2;
+  }
+  repeated ServiceGauge service_gauges = 4;
+}

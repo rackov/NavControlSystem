@@ -58,6 +58,15 @@ func New(level logrus.Level, filePath ...string) *Logger {
 	return &Logger{l}
 }
 
+// ParseLevel преобразует строку в logrus.Level.
+func ParseLevel(levelStr string) (logrus.Level, error) {
+	level, err := logrus.ParseLevel(levelStr)
+	if err != nil {
+		return INFO, err // Возвращаем уровень по умолчанию в случае ошибки
+	}
+	return level, nil
+}
+
 // --- Методы для установки уровня ---
 
 // SetLevel динамически меняет уровень логирования

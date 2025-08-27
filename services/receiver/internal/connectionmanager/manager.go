@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/rackov/NavControlSystem/pkg/logger"
+	"github.com/rackov/NavControlSystem/services/receiver/internal/protocol"
 )
 
 // ClientData — это интерфейс, который должен реализовывать обработчик протокола,
@@ -25,13 +26,6 @@ type ConnectionManager struct {
 
 	connections map[string]*clientConnection // Ключ - адрес клиента
 	clientData  ClientData                   // Зависимость для получения ID клиента
-}
-
-// ClientInfo содержит информацию о подключенном клиенте
-type ClientInfo struct {
-	ID    string    // ID устройства (например, из EGTS)
-	Addr  string    // Сетевой адрес клиента (IP:Port)
-	Since time.Time // Время подключения
 }
 
 // clientConnection хранит данные о конкретном подключении.
@@ -196,13 +190,13 @@ func (cm *ConnectionManager) GetActiveConnectionsCount() int {
 }
 
 // GetConnectedClients возвращает срез с информацией о всех подключенных клиентах
-func (cm *ConnectionManager) GetConnectedClients() []ClientInfo {
+func (cm *ConnectionManager) GetConnectedClients() []protocol.ClientInfo {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
-	clients := make([]ClientInfo, 0, len(cm.connections))
+	clients := make([]protocol.ClientInfo, 0, len(cm.connections))
 	for addr, connInfo := range cm.connections {
-		clients = append(clients, ClientInfo{
+		clients = append(clients, protocol.ClientInfo{
 			ID:    connInfo.clientID,
 			Addr:  addr,
 			Since: connInfo.connectedAt,
