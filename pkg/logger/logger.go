@@ -1,114 +1,114 @@
 package logger
 
 import (
-	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"sync"
 
 	"github.com/sirupsen/logrus"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+// Уровни логирования, соответствующие logrus
 const (
-	logFileName = "app.log"
+	TRACE = logrus.TraceLevel
+	DEBUG = logrus.DebugLevel
+	INFO  = logrus.InfoLevel
+	WARN  = logrus.WarnLevel
+	ERROR = logrus.ErrorLevel
 )
+
+// Logger - это наша обертка над logrus.Logger
+type Logger struct {
+	*logrus.Logger
+}
 
 var (
-	logInstance *logrus.Logger
-	once        sync.Once
+	defaultLogger = New(INFO) // Создаем экземпляр с уровнем по умолчанию
 )
 
-// if _, err := os.Stat("logs"); os.IsNotExist(err) {
-// 	os.Mkdir("logs", 0755)
-// }
+// New создает и настраивает новый экземпляр логгера.
+// filePath - путь к файлу для записи логов. Если пустой, логи пишутся только в stdout.
+func New(level logrus.Level, filePath ...string) *Logger {
+	l := logrus.New()
 
-// GetLogger возвращает экземпляр логгера (синглтон).
-func GetLogger() *logrus.Logger {
-	once.Do(func() {
-		logInstance = logrus.New()
-
-		// --- 1. Настройка вывода в КОНСОЛЬ ---
-		// Устанавливаем вывод по умолчанию в stdout (консоль)
-		logInstance.SetOutput(os.Stdout)
-		// Устанавливаем текстовый форматер для консоли
-		// НОВЫЙ ФОРМАТ ВРЕМЕНИ
-		customTimeFormat := "2006-01-02 15:04:05.000"
-
-		logInstance.SetFormatter(&logrus.TextFormatter{
-			// Раскрашиваем логи для удобства
-			ForceColors: true,
-			// Отображать полное время, а не только время от запуска
-			FullTimestamp:   true,
-			TimestampFormat: customTimeFormat,
-		})
-		// Устанавливаем уровень логирования
-		logInstance.SetLevel(logrus.InfoLevel)
-
-		// --- 2. Настройка вывода в ФАЙЛ через ХУК ---
-		logFilePath := filepath.Join("logs", logFileName)
-		file, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			// Если не удалось открыть файл, логируем ошибку в stderr и выходим
-			fmt.Fprintf(os.Stderr, "Не удалось открыть лог-файл: %v\n", err)
-			os.Exit(1)
-		}
-
-		jsonFormatter := &logrus.JSONFormatter{
-			// Устанавливаем тот же формат времени для файла
-			TimestampFormat: customTimeFormat,
-		}
-		// Создаем и добавляем хук
-		logInstance.AddHook(&fileHook{
-			writer:    file,
-			formatter: jsonFormatter,     // Формат для файла - JSON
-			level:     logrus.TraceLevel, // Записывать в файл все логи уровня Debug и выше
-		})
+	// Устанавливаем текстовый форматтер (как в стандартном log)
+	// Формат: time="2023-10-27T10:30:00+03:00" level=info msg="Some message"
+	l.SetFormatter(&logrus.TextFormatter{
+		DisableColors:   true,                  // Отключаем цвета для вывода в файл
+		FullTimestamp:   true,                  // Включаем полную временную метку
+		TimestampFormat: "2006-01-02 15:04:05", // Формат времени
 	})
-	return logInstance
-}
 
-// SetLevel - вспомогательная функция для изменения уровня логирования.
-func SetLevel(level string) error {
-	lvl, err := logrus.ParseLevel(level)
-	if err != nil {
-		return err
-	}
-	GetLogger().SetLevel(lvl)
-	GetLogger().Infof("Уровень логирования изменен на %s", level)
-	return nil
-}
+	l.SetOutput(os.Stdout) // По умолчанию выводим в консоль
+	l.SetLevel(level)      // Устанавливаем уровень
 
-// GetLogFilePath возвращает путь к лог-файлу.
-func GetLogFilePath() string {
-	GetLogger()
-	return filepath.Join("logs", logFileName)
-}
-
-// --- НОВЫЙ КОД: Наш собственный хук ---
-// fileHook реализует интерфейс logrus.Hook
-type fileHook struct {
-	writer    io.Writer
-	formatter logrus.Formatter
-	level     logrus.Level
-}
-
-// Fire вызывается, когда логируется событие.
-// Мы решаем, что делать с записью (entry).
-func (hook *fileHook) Fire(entry *logrus.Entry) error {
-	// Форматируем запись согласно нашему форматеру (JSON)
-	msg, err := hook.formatter.Format(entry)
-	if err != nil {
-		return err
+	// Если передан путь к файлу, настраиваем запись в файл с ротацией
+	if len(filePath) > 0 && filePath[0] != "" {
+		// Создаем MultiWriter для записи и в консоль, и в файл
+		multiWriter := io.MultiWriter(os.Stdout, &lumberjack.Logger{
+			Filename:   filePath[0],
+			MaxSize:    100,  // MB
+			MaxBackups: 3,    // Хранить 3 старых файла логов
+			MaxAge:     28,   // Дней
+			Compress:   true, // Сжимать старые логи
+		})
+		l.SetOutput(multiWriter)
 	}
 
-	// Записываем отформатированное сообщение в наш writer (файл)
-	_, err = hook.writer.Write(msg)
-	return err
+	return &Logger{l}
 }
 
-// Levels возвращает уровни логирования, на которые этот хук должен реагировать.
-func (hook *fileHook) Levels() []logrus.Level {
-	// Мы хотим, чтобы хук срабатывал на всех уровнях, начиная с hook.level
-	return logrus.AllLevels[:hook.level+1]
+// --- Методы для установки уровня ---
+
+// SetLevel динамически меняет уровень логирования
+func (l *Logger) SetLevel(level logrus.Level) {
+	l.Logger.SetLevel(level)
+}
+
+// SetGlobalLevel устанавливает уровень для глобального логгера
+func SetGlobalLevel(level logrus.Level) {
+	defaultLogger.SetLevel(level)
+}
+
+// --- Глобальные функции-хелперы для удобства ---
+
+// Они вызывают методы у глобального экземпляра defaultLogger
+
+func Info(args ...interface{}) {
+	defaultLogger.Info(args...)
+}
+
+func Debug(args ...interface{}) {
+	defaultLogger.Debug(args...)
+}
+
+func Warn(args ...interface{}) {
+	defaultLogger.Warn(args...)
+}
+
+func Error(args ...interface{}) {
+	defaultLogger.Error(args...)
+}
+
+func Infof(format string, args ...interface{}) {
+	defaultLogger.Infof(format, args...)
+}
+
+func Debugf(format string, args ...interface{}) {
+	defaultLogger.Debugf(format, args...)
+}
+
+func Warnf(format string, args ...interface{}) {
+	defaultLogger.Warnf(format, args...)
+}
+
+func Errorf(format string, args ...interface{}) {
+	defaultLogger.Errorf(format, args...)
+}
+
+// GetLogger возвращает экземпляр глобального логгера.
+// Это может быть полезно, если какой-то компонент хочет получить
+// прямой доступ к логгеру, а не использовать глобальные функции.
+func GetLogger() *Logger {
+	return defaultLogger
 }
