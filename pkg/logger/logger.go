@@ -73,7 +73,12 @@ func SetGlobalLevel(level logrus.Level) {
 // --- Глобальные функции-хелперы для удобства ---
 
 // Они вызывают методы у глобального экземпляра defaultLogger
-
+func Trace(args ...interface{}) {
+	defaultLogger.Trace(args...)
+}
+func Tracef(format string, args ...interface{}) {
+	defaultLogger.Tracef(format, args...)
+}
 func Info(args ...interface{}) {
 	defaultLogger.Info(args...)
 }
