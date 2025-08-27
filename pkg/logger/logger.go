@@ -73,6 +73,15 @@ func SetGlobalLevel(level logrus.Level) {
 // --- Глобальные функции-хелперы для удобства ---
 
 // Они вызывают методы у глобального экземпляра defaultLogger
+func WithField(key string, value interface{}) *logrus.Entry {
+	return defaultLogger.WithField(key, value)
+}
+func WithFields(fields logrus.Fields) *logrus.Entry {
+	return defaultLogger.WithFields(fields)
+}
+func WithError(err error) *logrus.Entry {
+	return defaultLogger.WithError(err)
+}
 func Trace(args ...interface{}) {
 	defaultLogger.Trace(args...)
 }
