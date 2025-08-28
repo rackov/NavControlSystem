@@ -3,6 +3,7 @@ package logger
 import (
 	"io"
 	"os"
+	"sync"
 
 	"github.com/sirupsen/logrus"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -17,13 +18,13 @@ const (
 	ERROR = logrus.ErrorLevel
 )
 
-// Logger - это наша обертка над logrus.Logger
 type Logger struct {
 	*logrus.Logger
 }
 
 var (
-	defaultLogger = New(INFO) // Создаем экземпляр с уровнем по умолчанию
+	defaultLogger *Logger
+	once          sync.Once
 )
 
 // New создает и настраивает новый экземпляр логгера.
@@ -31,31 +32,35 @@ var (
 func New(level logrus.Level, filePath ...string) *Logger {
 	l := logrus.New()
 
-	// Устанавливаем текстовый форматтер (как в стандартном log)
-	// Формат: time="2023-10-27T10:30:00+03:00" level=info msg="Some message"
 	l.SetFormatter(&logrus.TextFormatter{
-		DisableColors:   true,                  // Отключаем цвета для вывода в файл
-		FullTimestamp:   true,                  // Включаем полную временную метку
-		TimestampFormat: "2006-01-02 15:04:05", // Формат времени
+		DisableColors:   true,
+		FullTimestamp:   true,
+		TimestampFormat: "2006-01-02 15:04:05",
 	})
 
-	l.SetOutput(os.Stdout) // По умолчанию выводим в консоль
-	l.SetLevel(level)      // Устанавливаем уровень
+	l.SetOutput(os.Stdout)
+	l.SetLevel(level)
 
-	// Если передан путь к файлу, настраиваем запись в файл с ротацией
 	if len(filePath) > 0 && filePath[0] != "" {
-		// Создаем MultiWriter для записи и в консоль, и в файл
 		multiWriter := io.MultiWriter(os.Stdout, &lumberjack.Logger{
 			Filename:   filePath[0],
-			MaxSize:    100,  // MB
-			MaxBackups: 3,    // Хранить 3 старых файла логов
-			MaxAge:     28,   // Дней
-			Compress:   true, // Сжимать старые логи
+			MaxSize:    100,
+			MaxBackups: 3,
+			MaxAge:     28,
+			Compress:   true,
 		})
 		l.SetOutput(multiWriter)
 	}
 
 	return &Logger{l}
+}
+
+// Init инициализирует глобальный логгер-синглтон.
+// Ее нужно вызвать один раз при старте приложения.
+func Init(level logrus.Level, filePath ...string) {
+	once.Do(func() {
+		defaultLogger = New(level, filePath...)
+	})
 }
 
 // ParseLevel преобразует строку в logrus.Level.
@@ -92,40 +97,70 @@ func WithError(err error) *logrus.Entry {
 	return defaultLogger.WithError(err)
 }
 func Trace(args ...interface{}) {
+	if defaultLogger == nil {
+		return
+	}
 	defaultLogger.Trace(args...)
 }
 func Tracef(format string, args ...interface{}) {
+	if defaultLogger == nil {
+		return
+	}
 	defaultLogger.Tracef(format, args...)
 }
 func Info(args ...interface{}) {
+	if defaultLogger == nil {
+		return
+	}
 	defaultLogger.Info(args...)
 }
 
 func Debug(args ...interface{}) {
+	if defaultLogger == nil {
+		return
+	}
 	defaultLogger.Debug(args...)
 }
 
 func Warn(args ...interface{}) {
+	if defaultLogger == nil {
+		return
+	}
 	defaultLogger.Warn(args...)
 }
 
 func Error(args ...interface{}) {
+	if defaultLogger == nil {
+		return
+	}
 	defaultLogger.Error(args...)
 }
 
 func Infof(format string, args ...interface{}) {
+	if defaultLogger == nil {
+		return
+	}
 	defaultLogger.Infof(format, args...)
 }
 
 func Debugf(format string, args ...interface{}) {
+	if defaultLogger == nil {
+		return
+	}
 	defaultLogger.Debugf(format, args...)
 }
 
 func Warnf(format string, args ...interface{}) {
+	if defaultLogger == nil {
+		return
+	}
 	defaultLogger.Warnf(format, args...)
 }
 
 func Errorf(format string, args ...interface{}) {
+	if defaultLogger == nil {
+		return
+	}
 	defaultLogger.Errorf(format, args...)
 }
 

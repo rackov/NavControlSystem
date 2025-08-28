@@ -88,13 +88,13 @@ func (h *ArnaviHandler) handleConnection(ctx context.Context, conn net.Conn, cli
 			return
 		default:
 			// ... логика парсинга пакета EGTS ...
-			navData := protocol.NavRecord{}
+			navData := protocol.NavRecord{Client: 1}
 			// navData, err := ParseEgtsPacket(nil)
-			var err error
-			if err != nil {
-				logger.Errorf("Failed to parse Arnavi packet for client ID %s: %v", clientID, err)
-				continue
-			}
+			// var err error
+			// if err != nil {
+			// 	logger.Errorf("Failed to parse Arnavi packet for client ID %s: %v", clientID, err)
+			// 	continue
+			// }
 
 			if h.publisher.IsConnected() {
 				if err := h.publisher.Publish(&navData); err != nil {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/rackov/NavControlSystem/pkg/logger"
+	"github.com/rackov/NavControlSystem/proto"
 	"github.com/rackov/NavControlSystem/services/receiver/internal/handler/arnavi"
 	"github.com/rackov/NavControlSystem/services/receiver/internal/protocol"
 	"google.golang.org/grpc"
@@ -24,13 +25,14 @@ import (
 type ReceiverServer struct {
 	proto.UnimplementedReceiverControlServer
 
-	cfg         *Config
-	nc          *nats.Conn
-	js          nats.JetStreamContext
-	handlers    map[string]protocol.ProtocolHandler // Карта обработчиков по имени
-	handlersMu  sync.RWMutex
-	grpcServer  *grpc.Server
-	natsSubject string // Топик NATS для публикации данных
+	cfg                  *Config
+	nc                   *nats.Conn
+	js                   nats.JetStreamContext
+	handlers             map[string]protocol.ProtocolHandler // Карта обработчиков по имени
+	handlersMu           sync.RWMutex
+	grpcServer           *grpc.Server
+	natsSubject          string    // Топик NATS для публикации данных
+	natsStatusChangeChan chan bool // Канал для получения уведомлений о статусе NATS (true=connected, false=disconnected)
 }
 
 // NewReceiverServer создает новый экземпляр сервера.
@@ -39,6 +41,8 @@ func NewReceiverServer(cfg *Config) *ReceiverServer {
 		cfg:         cfg,
 		handlers:    make(map[string]protocol.ProtocolHandler),
 		natsSubject: "nav.data.raw", // Стандартный топик для данных
+		// Инициализируем канал при создании сервера
+		natsStatusChangeChan: make(chan bool, 1), // Буферизированный канал на 1 сообщение
 	}
 }
 
@@ -48,24 +52,24 @@ func (s *ReceiverServer) Start(ctx context.Context) error {
 
 	// 1. Подключение к NATS
 	if err := s.connectNats(); err != nil {
-		logger.Error("Failed to connect to NATS: %v", err)
+		logger.Errorf("failed to connect to NATS: %v", err)
 		return fmt.Errorf("failed to connect to NATS: %w", err)
 	}
-	logger.Info("Successfully connected to NATS at %s", s.cfg.NatsURL)
+	logger.Infof("Successfully connected to NATS at %s", s.cfg.NatsURL)
 	ServiceMetrics.SetGauge("nats_connected", 1)
 
 	// 2. Инициализация и запуск обработчиков протоколов
 	if err := s.startProtocolHandlers(ctx); err != nil {
-		logger.Error("Failed to start protocol handlers: %v", err)
+		logger.Errorf("Failed to start protocol handlers: %v", err)
 		return fmt.Errorf("failed to start protocol handlers: %w", err)
 	}
 
 	// 3. Запуск gRPC сервера
 	if err := s.startGrpcServer(); err != nil {
-		logger.Error("Failed to start gRPC server: %v", err)
+		logger.Errorf("Failed to start gRPC server: %v", err)
 		return fmt.Errorf("failed to start gRPC server: %w", err)
 	}
-	logger.Info("gRPC server started on port %d", s.cfg.GrpcPort)
+	logger.Infof("gRPC server started on port %d", s.cfg.GrpcPort)
 
 	// 4. Запуск горутины для мониторинга состояния NATS
 	go s.monitorNatsConnection(ctx)
@@ -99,20 +103,39 @@ func (s *ReceiverServer) Stop() {
 
 // --- NATS Management ---
 
-// connectNats устанавливает соединение с NATS.
+// connectNats устанавливает соединение с NATS и назначает обработчики событий.
 func (s *ReceiverServer) connectNats() error {
 	var err error
 	s.nc, err = nats.Connect(s.cfg.NatsURL,
 		nats.ReconnectWait(2*time.Second),
 		nats.MaxReconnects(5),
+		// НАЗНАЧАЕМ НАШИ ФУНКЦИИ-ОБРАБОТЧИКИ
 		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
-			logger.Warn("NATS connection disconnected: %v", err)
+			logger.Warnf("NATS connection disconnected: %v", err)
+			// При дисконнекте мы не знаем, будет ли переподключение, поэтому не отправляем сигнал сюда.
+			// Сигнал отправится только в ClosedHandler, если переподключение не удалось.
 		}),
 		nats.ReconnectHandler(func(nc *nats.Conn) {
 			logger.Info("NATS connection reestablished")
+			// Отправляем сигнал в канал, что NATS снова подключен
+			select {
+			case s.natsStatusChangeChan <- true:
+				logger.Debugf("Sent 'connected' signal to NATS status channel")
+			default:
+				// Если канал уже занят (буфер полон), ничего не делаем,
+				// чтобы не блокировать callback NATS.
+				logger.Debugf("NATS status channel is full, 'connected' signal not sent")
+			}
 		}),
 		nats.ClosedHandler(func(nc *nats.Conn) {
-			logger.Error("NATS connection closed: %v", nc.LastError())
+			logger.Errorf("NATS connection closed permanently: %v", nc.LastError())
+			// Отправляем сигнал, что NATS окончательно отключен
+			select {
+			case s.natsStatusChangeChan <- false:
+				logger.Debugf("Sent 'disconnected' signal to NATS status channel")
+			default:
+				logger.Debugf("NATS status channel is full, 'disconnected' signal not sent")
+			}
 		}),
 	)
 	if err != nil {
@@ -121,29 +144,34 @@ func (s *ReceiverServer) connectNats() error {
 
 	s.js, err = s.nc.JetStream()
 	if err != nil {
-		logger.Warn("JetStream not available, falling back to core NATS. Error: %v", err)
+		logger.Warnf("JetStream not available, falling back to core NATS. Error: %v", err)
 		s.js = nil
 	}
 	return nil
 }
 
-// monitorNatsConnection отслеживает состояние подключения к NATS и
-// управляет жизненным циклом обработчиков протоколов.
+// monitorNatsConnection слушает канал с уведомлениями и управляет обработчиками.
 func (s *ReceiverServer) monitorNatsConnection(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			logger.Info("NATS monitoring stopped by context cancellation.")
 			return
-		case <-s.nc.Opts.ReconnectedCB:
-			logger.Info("Reconnected to NATS, restarting protocol handlers.")
-			ServiceMetrics.SetGauge("nats_connected", 1)
-			if err := s.startProtocolHandlers(ctx); err != nil {
-				logger.Error("Failed to restart protocol handlers after NATS reconnect: %v", err)
+
+		// СЛУШАЕМ НАШ КАНАЛ, А НЕ CALLBACK
+		case isConnected := <-s.natsStatusChangeChan:
+			logger.Infof("Received NATS status change event. Connected: %v", isConnected)
+			if isConnected {
+				logger.Info("NATS reconnected, restarting protocol handlers.")
+				ServiceMetrics.SetGauge("nats_connected", 1)
+				if err := s.startProtocolHandlers(ctx); err != nil {
+					logger.Errorf("Failed to restart protocol handlers after NATS reconnect: %v", err)
+				}
+			} else {
+				logger.Warn("NATS connection lost, stopping protocol handlers.")
+				ServiceMetrics.SetGauge("nats_connected", 0)
+				s.stopProtocolHandlers()
 			}
-		case <-s.nc.Opts.ClosedCB:
-			logger.Warn("Connection to NATS lost, stopping protocol handlers.")
-			ServiceMetrics.SetGauge("nats_connected", 0)
-			s.stopProtocolHandlers()
 		}
 	}
 }
@@ -193,26 +221,26 @@ func (s *ReceiverServer) startProtocolHandlers(ctx context.Context) error {
 	for _, protoCfg := range s.cfg.ProtocolConfigs {
 		var handler protocol.ProtocolHandler
 		switch protoCfg.Name {
-		case "EGTS":
+		case "ARNAVI":
 			handler = arnavi.NewArnaviHandler()
-		// case "ARNAVI":
+		// case "EGTS":
 		// 	handler = arnavi.NewArnaviHandler()
 		// case "NDTP":
 		// 	handler = ndtp.NewNdtpHandler()
 		default:
-			logger.Warn("Unsupported protocol: %s, skipping", protoCfg.Name)
+			logger.Warnf("Unsupported protocol: %s, skipping", protoCfg.Name)
 			continue
 		}
 
-		if err := handler.Start(ctx, protoCfg.Port, s); err != nil {
-			logger.Error("Failed to start %s handler on port %d: %v", protoCfg.Name, protoCfg.Port, err)
+		if err := handler.Start(ctx, s, protoCfg.Port); err != nil {
+			logger.Errorf("Failed to start %s handler on port %d: %v", protoCfg.Name, protoCfg.Port, err)
 			// Если не удалось запустить один из обработчиков, откатываем все
 			s.stopProtocolHandlersInternal()
 			return fmt.Errorf("failed to start %s handler", protoCfg.Name)
 		}
 
 		s.handlers[protoCfg.Name] = handler
-		logger.Info("%s handler started successfully on port %d", protoCfg.Name, protoCfg.Port)
+		logger.Infof("%s handler started successfully on port %d", protoCfg.Name, protoCfg.Port)
 	}
 	return nil
 }
@@ -237,7 +265,7 @@ func (s *ReceiverServer) stopProtocolHandlersInternal() {
 		go func(name string, h protocol.ProtocolHandler) {
 			defer wg.Done()
 			if err := h.Stop(); err != nil {
-				logger.Error("Failed to stop %s handler: %v", name, err)
+				logger.Errorf("Failed to stop %s handler: %v", name, err)
 			}
 		}(name, handler)
 	}
@@ -260,7 +288,7 @@ func (s *ReceiverServer) startGrpcServer() error {
 
 	go func() {
 		if err := s.grpcServer.Serve(lis); err != nil && err != grpc.ErrServerStopped {
-			logger.Error("gRPC server error: %v", err)
+			logger.Errorf("gRPC server error: %v", err)
 		}
 	}()
 
@@ -273,12 +301,12 @@ func (s *ReceiverServer) startGrpcServer() error {
 func (s *ReceiverServer) SetLogLevel(ctx context.Context, req *proto.SetLogLevelRequest) (*proto.SetLogLevelResponse, error) {
 	level, err := logger.ParseLevel(req.Level) // Предполагаем, что в logger есть ParseLevel
 	if err != nil {
-		logger.Error("Failed to parse log level '%s': %v", req.Level, err)
+		logger.Errorf("Failed to parse log level '%s': %v", req.Level, err)
 		return nil, status.Errorf(codes.InvalidArgument, "invalid log level: %s", req.Level)
 	}
 
 	logger.SetGlobalLevel(level)
-	logger.Info("Log level set to %s", req.Level)
+	logger.Infof("Log level set to %s", req.Level)
 	return &proto.SetLogLevelResponse{Success: true}, nil
 }
 
@@ -319,12 +347,12 @@ func (s *ReceiverServer) GetActiveConnectionsCount(ctx context.Context, req *pro
 
 	handler, exists := s.handlers[req.ProtocolName]
 	if !exists {
-		logger.Warn("GRPC call GetActiveConnectionsCount for unknown protocol: %s", req.ProtocolName)
+		logger.Warnf("GRPC call GetActiveConnectionsCount for unknown protocol: %s", req.ProtocolName)
 		return nil, status.Errorf(codes.NotFound, "protocol handler '%s' not found", req.ProtocolName)
 	}
 
 	count := handler.GetActiveConnectionsCount()
-	logger.Info("GRPC call: GetActiveConnectionsCount for %s = %d", req.ProtocolName, count)
+	logger.Infof("GRPC call: GetActiveConnectionsCount for %s = %d", req.ProtocolName, count)
 	return wrapperspb.Int32(int32(count)), nil
 }
 
@@ -335,7 +363,7 @@ func (s *ReceiverServer) GetConnectedClients(ctx context.Context, req *proto.Get
 
 	handler, exists := s.handlers[req.ProtocolName]
 	if !exists {
-		logger.Warn("GRPC call GetConnectedClients for unknown protocol: %s", req.ProtocolName)
+		logger.Warnf("GRPC call GetConnectedClients for unknown protocol: %s", req.ProtocolName)
 		return nil, status.Errorf(codes.NotFound, "protocol handler '%s' not found", req.ProtocolName)
 	}
 
@@ -350,7 +378,7 @@ func (s *ReceiverServer) GetConnectedClients(ctx context.Context, req *proto.Get
 		})
 	}
 
-	logger.Info("GRPC call: GetConnectedClients for %s, found %d clients", req.ProtocolName, len(grpcClients))
+	logger.Infof("GRPC call: GetConnectedClients for %s, found %d clients", req.ProtocolName, len(grpcClients))
 	return &proto.GetClientsResponse{Clients: grpcClients}, nil
 }
 
@@ -361,17 +389,17 @@ func (s *ReceiverServer) DisconnectClient(ctx context.Context, req *proto.Discon
 
 	handler, exists := s.handlers[req.ProtocolName]
 	if !exists {
-		logger.Warn("GRPC call DisconnectClient for unknown protocol: %s", req.ProtocolName)
+		logger.Warnf("GRPC call DisconnectClient for unknown protocol: %s", req.ProtocolName)
 		return nil, status.Errorf(codes.NotFound, "protocol handler '%s' not found", req.ProtocolName)
 	}
 
-	logger.Info("GRPC call: DisconnectClient for %s, address %s", req.ProtocolName, req.ClientAddress)
+	logger.Infof("GRPC call: DisconnectClient for %s, address %s", req.ProtocolName, req.ClientAddress)
 	err := handler.DisconnectClient(req.ClientAddress)
 	if err != nil {
-		logger.Error("Failed to disconnect client %s for protocol %s: %v", req.ClientAddress, req.ProtocolName, err)
+		logger.Errorf("Failed to disconnect client %s for protocol %s: %v", req.ClientAddress, req.ProtocolName, err)
 		return &proto.DisconnectClientResponse{Success: false}, status.Errorf(codes.Internal, "could not disconnect client: %v", err)
 	}
 
-	logger.Info("Successfully disconnected client %s for protocol %s", req.ClientAddress, req.ProtocolName)
+	logger.Infof("Successfully disconnected client %s for protocol %s", req.ClientAddress, req.ProtocolName)
 	return &proto.DisconnectClientResponse{Success: true}, nil
 }

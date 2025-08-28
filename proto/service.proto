@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package proto;
+
+option go_package = "NavControlSystem/proto";
+
+// Общий сервис для управления логированием на любом из сервисов
+service LoggingControl {
+    rpc SetLogLevel(SetLogLevelRequest) returns (SetLogLevelResponse);
+}
+
+// Эти сообщения теперь общие и могут использоваться в других .proto файлах
+message SetLogLevelRequest {
+  string level = 1;
+}
+
+message SetLogLevelResponse {
+  bool success = 1;
+}

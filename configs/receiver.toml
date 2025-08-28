@@ -1,0 +1,25 @@
+# Основные настройки сервиса RECEIVER
+grpc_port = 50051
+metrics_port = 9091
+nats_url = "nats://localhost:4222"
+log_level = "info"
+
+# Настройка логирования
+[logging]
+# Если путь не указан, логи пишутся только в stdout.
+# Если указан, логи пишутся и в файл, и в stdout.
+file_path = "./logs/receiver.log"
+
+# Настройки для каждого из поддерживаемых протоколов.
+# Можно закомментировать ненужные протоколы, чтобы отключить их.
+# [[protocols]]
+# name = "EGTS"
+# port = 9999
+
+[[protocols]]
+name = "ARNAVI"
+port = 9998
+
+# [[protocols]]
+# name = "NDTP"
+# port = 9997
