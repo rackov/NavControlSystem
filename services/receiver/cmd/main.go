@@ -54,6 +54,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Запускаем воркер для изменений конфигурации
+	receiverServer.startConfigWorker(ctx)
+
 	if err := receiverServer.Start(ctx); err != nil {
 		logger.Errorf("Failed to start receiver server: %v", err)
 		panic(err)

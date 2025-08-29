@@ -141,16 +141,17 @@ func (c *Config) AddPort(name string, port int) (*ProtocolConfig, error) {
 		ID:     uuid.New().String(),
 		Name:   strings.ToUpper(name),
 		Port:   port,
-		Active: false, // По умолчанию добавлен, но не активен
+		Active: true, // По умолчанию добавлен, но не активен
 	}
 	c.ProtocolConfigs = append(c.ProtocolConfigs, newPortCfg)
 
-	// Сразу сохраняем изменения в файл
-	if err := c.Save(); err != nil {
-		// Откатываем изменение, если не удалось сохранить
-		c.ProtocolConfigs = c.ProtocolConfigs[:len(c.ProtocolConfigs)-1]
-		return nil, fmt.Errorf("failed to save config after adding port: %w", err)
-	}
+	// Убираем сохранение отсюда, оно будет после перезапуска обработчиков
+	// // Сразу сохраняем изменения в файл
+	// if err := c.Save(); err != nil {
+	// 	// Откатываем изменение, если не удалось сохранить
+	// 	c.ProtocolConfigs = c.ProtocolConfigs[:len(c.ProtocolConfigs)-1]
+	// 	return nil, fmt.Errorf("failed to save config after adding port: %w", err)
+	// }
 
 	return &newPortCfg, nil
 }

@@ -1,33 +1,19 @@
-# Основные настройки сервиса RECEIVER
 grpc_port = 50051
 metrics_port = 9091
 nats_url = "nats://localhost:4222"
 log_level = "info"
 
-# Настройка логирования
+[[protocols]]
+  id = "c3d4e5f6-a7b8-9012-3456-7890abcdef2"
+  name = "ARNAVI"
+  port = 9997
+  active = true
+
+[[protocols]]
+  id = "5a7f1f69-d26f-43a5-9a1e-54d5707541ec"
+  name = "ARNAVI"
+  port = 9998
+  active = true
+
 [logging]
-# Если путь не указан, логи пишутся только в stdout.
-# Если указан, логи пишутся и в файл, и в stdout.
-file_path = "./logs/receiver.log"
-
-# Настройки для каждого из поддерживаемых протоколов.
-# Можно закомментировать ненужные протоколы, чтобы отключить их.
-# [[protocols]]
-# name = "EGTS"
-# port = 9999
-
-[[protocols]]
-id = "c3d4e5f6-a7b8-9012-3456-7890abcdef2"
-name = "ARNAVI"
-port = 9997
-active = true
-
-[[protocols]]
-id = "b2c3d4e5-f6a7-8901-2345-67890abcdef1"
-name = "ARNAVI"
-port = 9998
-active = true
-
-# [[protocols]]
-# name = "NDTP"
-# port = 9997
+  file_path = "./logs/receiver.log"

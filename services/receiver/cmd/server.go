@@ -38,6 +38,9 @@ type ReceiverServer struct {
 	grpcServer           *grpc.Server
 	natsSubject          string    // Топик NATS для публикации данных
 	natsStatusChangeChan chan bool // Канал для получения уведомлений о статусе NATS (true=connected, false=disconnected)
+	// --- НОВЫЕ ПОЛЯ ДЛЯ АСИНХРОННОСТИ ---
+	configChangeChan chan func() error // Канал для функций, меняющих конфигурацию
+	shutdownChan     chan struct{}     // Канал для сигнала завершения работы
 }
 
 // NewReceiverServer создает новый экземпляр сервера.
@@ -47,7 +50,9 @@ func NewReceiverServer(cfg *Config) *ReceiverServer {
 		handlers:    make(map[string]protocol.ProtocolHandler),
 		natsSubject: "nav.data.raw", // Стандартный топик для данных
 		// Инициализируем канал при создании сервера
-		natsStatusChangeChan: make(chan bool, 1), // Буферизированный канал на 1 сообщение
+		natsStatusChangeChan: make(chan bool, 1),          // Буферизированный канал на 1 сообщение
+		configChangeChan:     make(chan func() error, 10), // Буферизированный канал
+		shutdownChan:         make(chan struct{}),
 	}
 }
 
@@ -484,21 +489,46 @@ func (s *ReceiverServer) ClosePort(ctx context.Context, req *proto.PortIdentifie
 func (s *ReceiverServer) AddPort(ctx context.Context, req *proto.PortDefinition) (*proto.PortOperationResponse, error) {
 	logger.Infof("GRPC call: AddPort for %s on port %d", req.Name, req.Port)
 
-	newPortCfg, err := s.cfg.AddPort(req.Name, int(req.Port))
-	if err != nil {
-		return &proto.PortOperationResponse{Success: false, Message: err.Error()}, nil
+	// Создаем задачу (замыкание), которая выполнит всю работу
+	task := func() error {
+		// 1. Добавляем порт в конфигурацию в памяти
+		newPortCfg, err := s.cfg.AddPort(req.Name, int(req.Port))
+		if err != nil {
+			return err
+		}
+		// Логируем детали порта, который был добавлен в конфигурацию
+		logger.Infof("Port added to in-memory config: ID=%s, Name=%s, Port=%d, Active=%t",
+			newPortCfg.ID, newPortCfg.Name, newPortCfg.Port, newPortCfg.Active)
+		// 2. Перезапускаем обработчики, чтобы применить изменения
+		// (startProtocolHandlers теперь тоже будет вызываться асинхронно)
+		return s.restartProtocolHandlers(ctx)
 	}
 
-	// Порт добавлен как неактивный, перезапуск обработчиков не требуется.
-	// Пользователь должен будет вызвать OpenPort отдельно.
-	return &proto.PortOperationResponse{
-		Success: true,
-		Message: "Port configuration added successfully. It is currently inactive.",
-		PortDetails: &proto.PortDefinition{
-			Name: newPortCfg.Name,
-			Port: int32(newPortCfg.Port),
-		},
-	}, nil
+	// 3. Отправляем задачу в канал и сразу возвращаем ответ клиенту
+	select {
+	case s.configChangeChan <- task:
+		logger.Info("AddPort task queued successfully.")
+		return &proto.PortOperationResponse{
+			Success:     true,
+			Message:     "Port addition task has been queued.",
+			PortDetails: req,
+		}, nil
+	case <-ctx.Done():
+		return nil, status.Errorf(codes.Canceled, "request cancelled")
+	}
+}
+
+// restartProtocolHandlers перезапускает обработчики и сохраняет конфигурацию.
+func (s *ReceiverServer) restartProtocolHandlers(ctx context.Context) error {
+	if err := s.startProtocolHandlers(ctx); err != nil {
+		return fmt.Errorf("failed to restart protocol handlers: %w", err)
+	}
+	logger.Info("Protocol handlers restarted successfully. Saving configuration.")
+	if err := s.cfg.Save(); err != nil {
+		// Это критическая ошибка, т.к. состояние в памяти и на диске разошлось.
+		return fmt.Errorf("failed to save configuration after restart: %w", err)
+	}
+	return nil
 }
 
 // DeletePort удаляет конфигурацию порта и перезапускает обработчики.
@@ -645,4 +675,23 @@ func (s *ReceiverServer) readLogFile(req *proto.ReadLogsRequest) ([]string, erro
 
 	logger.Debugf("Log reading complete. Processed %d lines, found %d matching entries.", linesProcessed, len(results))
 	return results, nil
+}
+
+// startConfigWorker запускает горутину для асинхронного выполнения задач по изменению конфигурации.
+func (s *ReceiverServer) startConfigWorker(ctx context.Context) {
+	logger.Info("Configuration worker started")
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				logger.Info("Configuration worker stopped by context cancellation.")
+				return
+			case task := <-s.configChangeChan:
+				logger.Debug("Executing a configuration change task...")
+				if err := task(); err != nil {
+					logger.Errorf("Failed to execute configuration task: %v", err)
+				}
+			}
+		}
+	}()
 }
