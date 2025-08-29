@@ -17,8 +17,16 @@ file_path = "./logs/receiver.log"
 # port = 9999
 
 [[protocols]]
+id = "c3d4e5f6-a7b8-9012-3456-7890abcdef2"
+name = "ARNAVI"
+port = 9997
+active = true
+
+[[protocols]]
+id = "b2c3d4e5-f6a7-8901-2345-67890abcdef1"
 name = "ARNAVI"
 port = 9998
+active = true
 
 # [[protocols]]
 # name = "NDTP"

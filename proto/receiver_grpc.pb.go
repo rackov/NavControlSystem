@@ -25,6 +25,10 @@ const (
 	ReceiverControl_GetActiveConnectionsCount_FullMethodName = "/proto.ReceiverControl/GetActiveConnectionsCount"
 	ReceiverControl_GetConnectedClients_FullMethodName       = "/proto.ReceiverControl/GetConnectedClients"
 	ReceiverControl_DisconnectClient_FullMethodName          = "/proto.ReceiverControl/DisconnectClient"
+	ReceiverControl_OpenPort_FullMethodName                  = "/proto.ReceiverControl/OpenPort"
+	ReceiverControl_ClosePort_FullMethodName                 = "/proto.ReceiverControl/ClosePort"
+	ReceiverControl_AddPort_FullMethodName                   = "/proto.ReceiverControl/AddPort"
+	ReceiverControl_DeletePort_FullMethodName                = "/proto.ReceiverControl/DeletePort"
 )
 
 // ReceiverControlClient is the client API for ReceiverControl service.
@@ -43,6 +47,14 @@ type ReceiverControlClient interface {
 	GetConnectedClients(ctx context.Context, in *GetClientsRequest, opts ...grpc.CallOption) (*GetClientsResponse, error)
 	// Отключить клиента
 	DisconnectClient(ctx context.Context, in *DisconnectClientRequest, opts ...grpc.CallOption) (*DisconnectClientResponse, error)
+	// Открыть порт (сделать active=true)
+	OpenPort(ctx context.Context, in *PortIdentifier, opts ...grpc.CallOption) (*PortOperationResponse, error)
+	// Закрыть порт (сделать active=false)
+	ClosePort(ctx context.Context, in *PortIdentifier, opts ...grpc.CallOption) (*PortOperationResponse, error)
+	// Добавить новый порт в конфигурацию (изначально неактивен)
+	AddPort(ctx context.Context, in *PortDefinition, opts ...grpc.CallOption) (*PortOperationResponse, error)
+	// Удалить порт из конфигурации
+	DeletePort(ctx context.Context, in *PortIdentifier, opts ...grpc.CallOption) (*PortOperationResponse, error)
 }
 
 type receiverControlClient struct {
@@ -103,6 +115,46 @@ func (c *receiverControlClient) DisconnectClient(ctx context.Context, in *Discon
 	return out, nil
 }
 
+func (c *receiverControlClient) OpenPort(ctx context.Context, in *PortIdentifier, opts ...grpc.CallOption) (*PortOperationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PortOperationResponse)
+	err := c.cc.Invoke(ctx, ReceiverControl_OpenPort_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *receiverControlClient) ClosePort(ctx context.Context, in *PortIdentifier, opts ...grpc.CallOption) (*PortOperationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PortOperationResponse)
+	err := c.cc.Invoke(ctx, ReceiverControl_ClosePort_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *receiverControlClient) AddPort(ctx context.Context, in *PortDefinition, opts ...grpc.CallOption) (*PortOperationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PortOperationResponse)
+	err := c.cc.Invoke(ctx, ReceiverControl_AddPort_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *receiverControlClient) DeletePort(ctx context.Context, in *PortIdentifier, opts ...grpc.CallOption) (*PortOperationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PortOperationResponse)
+	err := c.cc.Invoke(ctx, ReceiverControl_DeletePort_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ReceiverControlServer is the server API for ReceiverControl service.
 // All implementations must embed UnimplementedReceiverControlServer
 // for forward compatibility.
@@ -119,6 +171,14 @@ type ReceiverControlServer interface {
 	GetConnectedClients(context.Context, *GetClientsRequest) (*GetClientsResponse, error)
 	// Отключить клиента
 	DisconnectClient(context.Context, *DisconnectClientRequest) (*DisconnectClientResponse, error)
+	// Открыть порт (сделать active=true)
+	OpenPort(context.Context, *PortIdentifier) (*PortOperationResponse, error)
+	// Закрыть порт (сделать active=false)
+	ClosePort(context.Context, *PortIdentifier) (*PortOperationResponse, error)
+	// Добавить новый порт в конфигурацию (изначально неактивен)
+	AddPort(context.Context, *PortDefinition) (*PortOperationResponse, error)
+	// Удалить порт из конфигурации
+	DeletePort(context.Context, *PortIdentifier) (*PortOperationResponse, error)
 	mustEmbedUnimplementedReceiverControlServer()
 }
 
@@ -143,6 +203,18 @@ func (UnimplementedReceiverControlServer) GetConnectedClients(context.Context, *
 }
 func (UnimplementedReceiverControlServer) DisconnectClient(context.Context, *DisconnectClientRequest) (*DisconnectClientResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DisconnectClient not implemented")
+}
+func (UnimplementedReceiverControlServer) OpenPort(context.Context, *PortIdentifier) (*PortOperationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method OpenPort not implemented")
+}
+func (UnimplementedReceiverControlServer) ClosePort(context.Context, *PortIdentifier) (*PortOperationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ClosePort not implemented")
+}
+func (UnimplementedReceiverControlServer) AddPort(context.Context, *PortDefinition) (*PortOperationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AddPort not implemented")
+}
+func (UnimplementedReceiverControlServer) DeletePort(context.Context, *PortIdentifier) (*PortOperationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeletePort not implemented")
 }
 func (UnimplementedReceiverControlServer) mustEmbedUnimplementedReceiverControlServer() {}
 func (UnimplementedReceiverControlServer) testEmbeddedByValue()                         {}
@@ -255,6 +327,78 @@ func _ReceiverControl_DisconnectClient_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ReceiverControl_OpenPort_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PortIdentifier)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ReceiverControlServer).OpenPort(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ReceiverControl_OpenPort_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ReceiverControlServer).OpenPort(ctx, req.(*PortIdentifier))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ReceiverControl_ClosePort_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PortIdentifier)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ReceiverControlServer).ClosePort(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ReceiverControl_ClosePort_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ReceiverControlServer).ClosePort(ctx, req.(*PortIdentifier))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ReceiverControl_AddPort_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PortDefinition)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ReceiverControlServer).AddPort(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ReceiverControl_AddPort_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ReceiverControlServer).AddPort(ctx, req.(*PortDefinition))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ReceiverControl_DeletePort_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PortIdentifier)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ReceiverControlServer).DeletePort(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ReceiverControl_DeletePort_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ReceiverControlServer).DeletePort(ctx, req.(*PortIdentifier))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ReceiverControl_ServiceDesc is the grpc.ServiceDesc for ReceiverControl service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -281,6 +425,22 @@ var ReceiverControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DisconnectClient",
 			Handler:    _ReceiverControl_DisconnectClient_Handler,
+		},
+		{
+			MethodName: "OpenPort",
+			Handler:    _ReceiverControl_OpenPort_Handler,
+		},
+		{
+			MethodName: "ClosePort",
+			Handler:    _ReceiverControl_ClosePort_Handler,
+		},
+		{
+			MethodName: "AddPort",
+			Handler:    _ReceiverControl_AddPort_Handler,
+		},
+		{
+			MethodName: "DeletePort",
+			Handler:    _ReceiverControl_DeletePort_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

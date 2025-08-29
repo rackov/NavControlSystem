@@ -24,13 +24,21 @@ service ReceiverControl {
 
   // Отключить клиента
   rpc DisconnectClient(DisconnectClientRequest) returns (DisconnectClientResponse);
+
+    // Открыть порт (сделать active=true)
+  rpc OpenPort(PortIdentifier) returns (PortOperationResponse);
+
+  // Закрыть порт (сделать active=false)
+  rpc ClosePort(PortIdentifier) returns (PortOperationResponse);
+
+  // Добавить новый порт в конфигурацию (изначально неактивен)
+  rpc AddPort(PortDefinition) returns (PortOperationResponse);
+
+  // Удалить порт из конфигурации
+  rpc DeletePort(PortIdentifier) returns (PortOperationResponse);
 }
 
-// --- УДАЛЯЕМ ДУБЛИРУЮЩИЕСЯ СООБЩЕНИЯ ---
-// message SetLogLevelRequest { ... } // УДАЛЕНО
-// message SetLogLevelResponse { ... } // УДАЛЕНО
 
-// --- Оставляем уникальные для этого сервиса сообщения ---
 
 message GetStatusRequest {}
 
@@ -66,4 +74,19 @@ message DisconnectClientRequest {
 
 message DisconnectClientResponse {
   bool success = 1;
+}
+
+message PortIdentifier {
+  string id = 1; // Уникальный ID порта
+}
+
+message PortDefinition {
+  string name = 1; // Имя протокола (EGTS, ARNAVI, NDTP)
+  int32 port = 2;  // Номер порта
+}
+
+message PortOperationResponse {
+  bool success = 1;
+  string message = 2; // Описание результата или ошибки
+  PortDefinition port_details = 3; // Детали созданного/измененного порта
 }

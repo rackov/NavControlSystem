@@ -219,6 +219,10 @@ func (s *ReceiverServer) startProtocolHandlers(ctx context.Context) error {
 	s.stopProtocolHandlersInternal()
 
 	for _, protoCfg := range s.cfg.ProtocolConfigs {
+		if !protoCfg.Active {
+			logger.Debugf("Skipping inactive port: %s (ID: %s) on port %d", protoCfg.Name, protoCfg.ID, protoCfg.Port)
+			continue
+		}
 		var handler protocol.ProtocolHandler
 		switch protoCfg.Name {
 		case "ARNAVI":
@@ -402,4 +406,124 @@ func (s *ReceiverServer) DisconnectClient(ctx context.Context, req *proto.Discon
 
 	logger.Infof("Successfully disconnected client %s for protocol %s", req.ClientAddress, req.ProtocolName)
 	return &proto.DisconnectClientResponse{Success: true}, nil
+}
+
+// OpenPort делает порт активным и перезапускает обработчики.
+func (s *ReceiverServer) OpenPort(ctx context.Context, req *proto.PortIdentifier) (*proto.PortOperationResponse, error) {
+	logger.Infof("GRPC call: OpenPort for ID %s", req.Id)
+
+	// 1. Меняем состояние в конфигурации
+	if err := s.cfg.SetPortState(req.Id, true); err != nil {
+		return &proto.PortOperationResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
+	// 2. Перезапускаем обработчики, чтобы применить изменения
+	if err := s.startProtocolHandlers(ctx); err != nil {
+		// Если перезапуск не удался, откатываем изменение в конфиге
+		_ = s.cfg.SetPortState(req.Id, false) // Игнорируем ошибку при откате
+		return &proto.PortOperationResponse{
+			Success: false,
+			Message: fmt.Sprintf("failed to restart handlers after opening port: %v", err),
+		}, nil
+	}
+
+	portCfg, _ := s.cfg.GetPortByID(req.Id) // Ошибку не проверяем, т.к. SetPortState уже прошел
+	return &proto.PortOperationResponse{
+		Success: true,
+		Message: "Port opened successfully",
+		PortDetails: &proto.PortDefinition{
+			Name: portCfg.Name,
+			Port: int32(portCfg.Port),
+		},
+	}, nil
+}
+
+// ClosePort делает порт неактивным и перезапускает обработчики.
+func (s *ReceiverServer) ClosePort(ctx context.Context, req *proto.PortIdentifier) (*proto.PortOperationResponse, error) {
+	logger.Infof("GRPC call: ClosePort for ID %s", req.Id)
+
+	if err := s.cfg.SetPortState(req.Id, false); err != nil {
+		return &proto.PortOperationResponse{Success: false, Message: err.Error()}, nil
+	}
+
+	if err := s.startProtocolHandlers(ctx); err != nil {
+		_ = s.cfg.SetPortState(req.Id, true)
+		return &proto.PortOperationResponse{
+			Success: false,
+			Message: fmt.Sprintf("failed to restart handlers after closing port: %v", err),
+		}, nil
+	}
+
+	portCfg, _ := s.cfg.GetPortByID(req.Id)
+	return &proto.PortOperationResponse{
+		Success: true,
+		Message: "Port closed successfully",
+		PortDetails: &proto.PortDefinition{
+			Name: portCfg.Name,
+			Port: int32(portCfg.Port),
+		},
+	}, nil
+}
+
+// AddPort добавляет новую конфигурацию порта.
+func (s *ReceiverServer) AddPort(ctx context.Context, req *proto.PortDefinition) (*proto.PortOperationResponse, error) {
+	logger.Infof("GRPC call: AddPort for %s on port %d", req.Name, req.Port)
+
+	newPortCfg, err := s.cfg.AddPort(req.Name, int(req.Port))
+	if err != nil {
+		return &proto.PortOperationResponse{Success: false, Message: err.Error()}, nil
+	}
+
+	// Порт добавлен как неактивный, перезапуск обработчиков не требуется.
+	// Пользователь должен будет вызвать OpenPort отдельно.
+	return &proto.PortOperationResponse{
+		Success: true,
+		Message: "Port configuration added successfully. It is currently inactive.",
+		PortDetails: &proto.PortDefinition{
+			Name: newPortCfg.Name,
+			Port: int32(newPortCfg.Port),
+		},
+	}, nil
+}
+
+// DeletePort удаляет конфигурацию порта и перезапускает обработчики.
+func (s *ReceiverServer) DeletePort(ctx context.Context, req *proto.PortIdentifier) (*proto.PortOperationResponse, error) {
+	logger.Infof("GRPC call: DeletePort for ID %s", req.Id)
+
+	// Сначала получаем детали порта для ответа, прежде чем удалять
+	portCfg, err := s.cfg.GetPortByID(req.Id)
+	if err != nil {
+		return &proto.PortOperationResponse{Success: false, Message: err.Error()}, nil
+	}
+
+	if err := s.cfg.DeletePort(req.Id); err != nil {
+		return &proto.PortOperationResponse{Success: false, Message: err.Error()}, nil
+	}
+
+	// Перезапускаем обработчики, чтобы закрыть порт, если он был активен
+	if err := s.startProtocolHandlers(ctx); err != nil {
+		// Откатить удаление сложно, просто логируем ошибку
+		logger.Errorf("Failed to restart handlers after deleting port %s: %v", req.Id, err)
+		// Возвращаем успех, т.к. порт удален, но сообщаем о проблеме
+		return &proto.PortOperationResponse{
+			Success: true,
+			Message: "Port deleted, but failed to restart handlers: " + err.Error(),
+			PortDetails: &proto.PortDefinition{
+				Name: portCfg.Name,
+				Port: int32(portCfg.Port),
+			},
+		}, nil
+	}
+
+	return &proto.PortOperationResponse{
+		Success: true,
+		Message: "Port deleted successfully",
+		PortDetails: &proto.PortDefinition{
+			Name: portCfg.Name,
+			Port: int32(portCfg.Port),
+		},
+	}, nil
 }

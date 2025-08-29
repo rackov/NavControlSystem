@@ -42,6 +42,11 @@ func New(level logrus.Level, filePath ...string) *Logger {
 	l.SetLevel(level)
 
 	if len(filePath) > 0 && filePath[0] != "" {
+		l.SetFormatter(&logrus.JSONFormatter{ //TextFormatter{
+			// DisableColors:   true,
+			//  FullTimestamp:   true,
+			TimestampFormat: "2006-01-02 15:04:05",
+		})
 		multiWriter := io.MultiWriter(os.Stdout, &lumberjack.Logger{
 			Filename:   filePath[0],
 			MaxSize:    100,
