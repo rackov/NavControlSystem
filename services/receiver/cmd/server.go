@@ -19,6 +19,7 @@ import (
 	"github.com/rackov/NavControlSystem/services/receiver/internal/protocol"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -291,6 +292,10 @@ func (s *ReceiverServer) startGrpcServer() error {
 	proto.RegisterReceiverControlServer(s.grpcServer, s)
 	// --- РЕГИСТРИРУЕМ НОВЫЙ СЕРВИС -
 	proto.RegisterLogReaderServer(s.grpcServer, s) // ReceiverServer теперь реализует и LogReader
+
+	// --- РЕГИСТРИРУЕМ СЕРВИС РЕФЛЕКСИИ ---
+	// Это позволяет grpcurl и другим инструментам получать информацию об API
+	reflection.Register(s.grpcServer)
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", s.cfg.GrpcPort))
 	if err != nil {
