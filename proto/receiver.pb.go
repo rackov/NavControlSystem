@@ -112,9 +112,10 @@ func (x *GetStatusResponse) GetPorts() []*PortStatus {
 
 type PortStatus struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Port          int32                  `protobuf:"varint,2,opt,name=port,proto3" json:"port,omitempty"`
-	IsOpen        bool                   `protobuf:"varint,3,opt,name=is_open,json=isOpen,proto3" json:"is_open,omitempty"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                        //  Уникальный ID порта
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`                    // "EGTS", "Arnavi", "NDTP"
+	Port          int32                  `protobuf:"varint,3,opt,name=port,proto3" json:"port,omitempty"`                   // Номер порта
+	IsOpen        bool                   `protobuf:"varint,4,opt,name=is_open,json=isOpen,proto3" json:"is_open,omitempty"` // Открыт ли порт сейчас
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -147,6 +148,13 @@ func (x *PortStatus) ProtoReflect() protoreflect.Message {
 // Deprecated: Use PortStatus.ProtoReflect.Descriptor instead.
 func (*PortStatus) Descriptor() ([]byte, []int) {
 	return file_receiver_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *PortStatus) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
 }
 
 func (x *PortStatus) GetName() string {
@@ -578,12 +586,13 @@ const file_receiver_proto_rawDesc = "" +
 	"\x10GetStatusRequest\"c\n" +
 	"\x11GetStatusResponse\x12%\n" +
 	"\x0enats_connected\x18\x01 \x01(\bR\rnatsConnected\x12'\n" +
-	"\x05ports\x18\x02 \x03(\v2\x11.proto.PortStatusR\x05ports\"M\n" +
+	"\x05ports\x18\x02 \x03(\v2\x11.proto.PortStatusR\x05ports\"]\n" +
 	"\n" +
-	"PortStatus\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
-	"\x04port\x18\x02 \x01(\x05R\x04port\x12\x17\n" +
-	"\ais_open\x18\x03 \x01(\bR\x06isOpen\"8\n" +
+	"PortStatus\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x12\n" +
+	"\x04port\x18\x03 \x01(\x05R\x04port\x12\x17\n" +
+	"\ais_open\x18\x04 \x01(\bR\x06isOpen\"8\n" +
 	"\x11GetClientsRequest\x12#\n" +
 	"\rprotocol_name\x18\x01 \x01(\tR\fprotocolName\"_\n" +
 	"\n" +

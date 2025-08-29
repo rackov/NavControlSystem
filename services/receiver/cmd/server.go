@@ -41,6 +41,9 @@ type ReceiverServer struct {
 	// --- НОВЫЕ ПОЛЯ ДЛЯ АСИНХРОННОСТИ ---
 	configChangeChan chan func() error // Канал для функций, меняющих конфигурацию
 	shutdownChan     chan struct{}     // Канал для сигнала завершения работы
+
+	// Список ID портов, которые были активны до последнего падения NATS.
+	lastActivePortIDs map[string]bool
 }
 
 // NewReceiverServer создает новый экземпляр сервера.
@@ -53,6 +56,7 @@ func NewReceiverServer(cfg *Config) *ReceiverServer {
 		natsStatusChangeChan: make(chan bool, 1),          // Буферизированный канал на 1 сообщение
 		configChangeChan:     make(chan func() error, 10), // Буферизированный канал
 		shutdownChan:         make(chan struct{}),
+		lastActivePortIDs:    make(map[string]bool),
 	}
 }
 
@@ -69,7 +73,7 @@ func (s *ReceiverServer) Start(ctx context.Context) error {
 	ServiceMetrics.SetGauge("nats_connected", 1)
 
 	// 2. Инициализация и запуск обработчиков протоколов
-	if err := s.startProtocolHandlers(ctx); err != nil {
+	if err := s.startProtocolHandlers(ctx, false); err != nil {
 		logger.Errorf("Failed to start protocol handlers: %v", err)
 		return fmt.Errorf("failed to start protocol handlers: %w", err)
 	}
@@ -174,7 +178,7 @@ func (s *ReceiverServer) monitorNatsConnection(ctx context.Context) {
 			if isConnected {
 				logger.Info("NATS reconnected, restarting protocol handlers.")
 				ServiceMetrics.SetGauge("nats_connected", 1)
-				if err := s.startProtocolHandlers(ctx); err != nil {
+				if err := s.startProtocolHandlers(ctx, true); err != nil {
 					logger.Errorf("Failed to restart protocol handlers after NATS reconnect: %v", err)
 				}
 			} else {
@@ -221,41 +225,69 @@ func (s *ReceiverServer) IsConnected() bool {
 
 // startProtocolHandlers инициализирует и запускает обработчики для каждого
 // протокола, указанного в конфигурации.
-func (s *ReceiverServer) startProtocolHandlers(ctx context.Context) error {
+// startProtocolHandlers теперь принимает флаг `restoreMode`.
+func (s *ReceiverServer) startProtocolHandlers(ctx context.Context, restoreMode bool) error {
 	s.handlersMu.Lock()
 	defer s.handlersMu.Unlock()
-
-	// Останавливаем старые обработчики, если они были
 	s.stopProtocolHandlersInternal()
 
-	for _, protoCfg := range s.cfg.ProtocolConfigs {
-		if !protoCfg.Active {
-			logger.Debugf("Skipping inactive port: %s (ID: %s) on port %d", protoCfg.Name, protoCfg.ID, protoCfg.Port)
-			continue
+	s.cfg.mu.RLock()
+	defer s.cfg.mu.RUnlock()
+
+	logger.Info("Starting protocol handlers (restoreMode: %t)...", restoreMode)
+
+	portsToStart := make([]ProtocolConfig, 0)
+	if restoreMode {
+		// Ищем порты в конфигурации, которые есть в lastActivePortIDs
+		logger.Info("Attempting to restore last known active state.")
+		for _, cfgPort := range s.cfg.ProtocolConfigs {
+			if s.lastActivePortIDs[cfgPort.ID] {
+				portsToStart = append(portsToStart, cfgPort)
+				logger.Debug("Port %s (ID: %s) selected for restore.", cfgPort.Name, cfgPort.ID)
+			}
 		}
+	} else {
+		// Стандартный режим: запускаем все активные порты из конфигурации
+		logger.Info("Starting all active ports from configuration.")
+		for _, cfgPort := range s.cfg.ProtocolConfigs {
+			if cfgPort.Active {
+				portsToStart = append(portsToStart, cfgPort)
+			}
+		}
+	}
+
+	if len(portsToStart) == 0 {
+		logger.Info("No ports to start.")
+		return nil
+	}
+
+	for _, protoCfg := range portsToStart {
 		var handler protocol.ProtocolHandler
 		switch protoCfg.Name {
 		case "ARNAVI":
 			handler = arnavi.NewArnaviHandler()
-		// case "EGTS":
-		// 	handler = arnavi.NewArnaviHandler()
-		// case "NDTP":
-		// 	handler = ndtp.NewNdtpHandler()
+		// case "ARNAVI": ...
 		default:
 			logger.Warnf("Unsupported protocol: %s, skipping", protoCfg.Name)
 			continue
 		}
 
 		if err := handler.Start(ctx, s, protoCfg.Port); err != nil {
-			logger.Errorf("Failed to start %s handler on port %d: %v", protoCfg.Name, protoCfg.Port, err)
-			// Если не удалось запустить один из обработчиков, откатываем все
+			logger.Error("Failed to start %s handler on port %d (ID: %s): %v", protoCfg.Name, protoCfg.Port, protoCfg.ID, err)
 			s.stopProtocolHandlersInternal()
 			return fmt.Errorf("failed to start %s handler", protoCfg.Name)
 		}
 
-		s.handlers[protoCfg.Name] = handler
-		logger.Infof("%s handler started successfully on port %d", protoCfg.Name, protoCfg.Port)
+		s.handlers[protoCfg.ID] = handler
+		logger.Info("%s handler started successfully on port %d (ID: %s)", protoCfg.Name, protoCfg.Port, protoCfg.ID)
 	}
+
+	// После успешного восстановления, очищаем сохраненное состояние, чтобы не влиять на будущие перезапуски
+	if restoreMode {
+		s.lastActivePortIDs = make(map[string]bool)
+		logger.Info("Restore successful. Clearing saved state.")
+	}
+
 	return nil
 }
 
@@ -273,6 +305,13 @@ func (s *ReceiverServer) stopProtocolHandlersInternal() {
 	}
 
 	logger.Info("Stopping all protocol handlers...")
+	// --- НОВЫЙ КОД: Сохраняем ID активных портов ---
+	s.lastActivePortIDs = make(map[string]bool)
+	for id := range s.handlers {
+		s.lastActivePortIDs[id] = true
+	}
+	logger.Infof("Saved %d active port IDs for future restore.", len(s.lastActivePortIDs))
+	//-------------------------------------------------
 	var wg sync.WaitGroup
 	for name, handler := range s.handlers {
 		wg.Add(1)
@@ -336,28 +375,29 @@ func (s *ReceiverServer) GetStatus(ctx context.Context, req *proto.GetStatusRequ
 	s.handlersMu.RLock()
 	defer s.handlersMu.RUnlock()
 
+	// Блокируем конфигурацию на время чтения
+	s.cfg.mu.RLock()
+	defer s.cfg.mu.RUnlock()
+
 	response := &proto.GetStatusResponse{
 		NatsConnected: s.IsConnected(),
 	}
 
-	for name, handler := range s.handlers {
-		var port int32
-		// Ищем порт в конфигурации, так как сам обработчик его не хранит
-		for _, cfg := range s.cfg.ProtocolConfigs {
-			if cfg.Name == name {
-				port = int32(cfg.Port)
-				break
-			}
-		}
+	// Итерируемся по всем портам из КОНФИГУРАЦИИ
+	for _, portCfg := range s.cfg.ProtocolConfigs {
+		// Статус "открыт/закрыт" теперь определяется ТОЛЬКО флагом `active` в конфиге.
+		// Это делает статус предсказуемым и не зависящим от асинхронного состояния воркера.
+		isOpen := portCfg.Active
 
 		response.Ports = append(response.Ports, &proto.PortStatus{
-			Name:   name,
-			Port:   port,
-			IsOpen: handler.IsRunning(),
+			Id:     portCfg.ID, // <-- Добавляем ID
+			Name:   portCfg.Name,
+			Port:   int32(portCfg.Port),
+			IsOpen: isOpen,
 		})
 	}
 
-	logger.Debug("GRPC call: GetStatus")
+	logger.Debugf("GRPC call: GetStatus. Found %d port configurations.", len(response.Ports))
 	return response, nil
 }
 
@@ -438,7 +478,7 @@ func (s *ReceiverServer) OpenPort(ctx context.Context, req *proto.PortIdentifier
 	}
 
 	// 2. Перезапускаем обработчики, чтобы применить изменения
-	if err := s.startProtocolHandlers(ctx); err != nil {
+	if err := s.startProtocolHandlers(ctx, false); err != nil {
 		// Если перезапуск не удался, откатываем изменение в конфиге
 		_ = s.cfg.SetPortState(req.Id, false) // Игнорируем ошибку при откате
 		return &proto.PortOperationResponse{
@@ -466,7 +506,7 @@ func (s *ReceiverServer) ClosePort(ctx context.Context, req *proto.PortIdentifie
 		return &proto.PortOperationResponse{Success: false, Message: err.Error()}, nil
 	}
 
-	if err := s.startProtocolHandlers(ctx); err != nil {
+	if err := s.startProtocolHandlers(ctx, false); err != nil {
 		_ = s.cfg.SetPortState(req.Id, true)
 		return &proto.PortOperationResponse{
 			Success: false,
@@ -520,7 +560,7 @@ func (s *ReceiverServer) AddPort(ctx context.Context, req *proto.PortDefinition)
 
 // restartProtocolHandlers перезапускает обработчики и сохраняет конфигурацию.
 func (s *ReceiverServer) restartProtocolHandlers(ctx context.Context) error {
-	if err := s.startProtocolHandlers(ctx); err != nil {
+	if err := s.startProtocolHandlers(ctx, false); err != nil {
 		return fmt.Errorf("failed to restart protocol handlers: %w", err)
 	}
 	logger.Info("Protocol handlers restarted successfully. Saving configuration.")
@@ -546,7 +586,7 @@ func (s *ReceiverServer) DeletePort(ctx context.Context, req *proto.PortIdentifi
 	}
 
 	// Перезапускаем обработчики, чтобы закрыть порт, если он был активен
-	if err := s.startProtocolHandlers(ctx); err != nil {
+	if err := s.startProtocolHandlers(ctx, false); err != nil {
 		// Откатить удаление сложно, просто логируем ошибку
 		logger.Errorf("Failed to restart handlers after deleting port %s: %v", req.Id, err)
 		// Возвращаем успех, т.к. порт удален, но сообщаем о проблеме

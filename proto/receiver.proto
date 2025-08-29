@@ -48,9 +48,10 @@ message GetStatusResponse {
 }
 
 message PortStatus {
-  string name = 1;
-  int32 port = 2;
-  bool is_open = 3;
+  string id = 1;      //  Уникальный ID порта
+  string name = 2;    // "EGTS", "Arnavi", "NDTP"
+  int32 port = 3;     // Номер порта
+  bool is_open = 4;   // Открыт ли порт сейчас
 }
 
 message GetClientsRequest {
