@@ -17,3 +17,38 @@ message SetLogLevelRequest {
 message SetLogLevelResponse {
   bool success = 1;
 }
+
+// Сервис для удаленного чтения логов
+service LogReader {
+  // ReadLogs читает логи с применением фильтров
+  rpc ReadLogs(ReadLogsRequest) returns (ReadLogsResponse);
+}
+// --- Сообщения для запроса и ответа логов ---
+
+// Запрос на чтение логов
+message ReadLogsRequest {
+  // Фильтр по уровню логирования (DEBUG, INFO, WARN, ERROR).
+  // Если не указан, читаются логи всех уровней.
+  string level = 1;
+  
+  // Фильтр по начальной дате (Unix timestamp в секундах).
+  // Если не указан, читается с самого начала файла.
+  int64 start_date = 2;
+  
+  // Фильтр по конечной дате (Unix timestamp в секундах).
+  // Если не указан, читается до конца файла.
+  int64 end_date = 3;
+  
+  // Максимальное количество строк для возврата.
+  // Если не указан или 0, возвращаются все найденные строки (осторожно с большими файлами).
+  int32 limit = 4;
+}
+
+// Ответ с прочитанными логами
+message ReadLogsResponse {
+  bool success = 1;
+  string message = 2; // Сообщение об ошибке или статус
+  
+  // Сами строки логов
+  repeated string log_lines = 3;
+}

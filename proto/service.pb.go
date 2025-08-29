@@ -110,6 +110,145 @@ func (x *SetLogLevelResponse) GetSuccess() bool {
 	return false
 }
 
+// Запрос на чтение логов
+type ReadLogsRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Фильтр по уровню логирования (DEBUG, INFO, WARN, ERROR).
+	// Если не указан, читаются логи всех уровней.
+	Level string `protobuf:"bytes,1,opt,name=level,proto3" json:"level,omitempty"`
+	// Фильтр по начальной дате (Unix timestamp в секундах).
+	// Если не указан, читается с самого начала файла.
+	StartDate int64 `protobuf:"varint,2,opt,name=start_date,json=startDate,proto3" json:"start_date,omitempty"`
+	// Фильтр по конечной дате (Unix timestamp в секундах).
+	// Если не указан, читается до конца файла.
+	EndDate int64 `protobuf:"varint,3,opt,name=end_date,json=endDate,proto3" json:"end_date,omitempty"`
+	// Максимальное количество строк для возврата.
+	// Если не указан или 0, возвращаются все найденные строки (осторожно с большими файлами).
+	Limit         int32 `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReadLogsRequest) Reset() {
+	*x = ReadLogsRequest{}
+	mi := &file_service_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReadLogsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReadLogsRequest) ProtoMessage() {}
+
+func (x *ReadLogsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_service_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReadLogsRequest.ProtoReflect.Descriptor instead.
+func (*ReadLogsRequest) Descriptor() ([]byte, []int) {
+	return file_service_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ReadLogsRequest) GetLevel() string {
+	if x != nil {
+		return x.Level
+	}
+	return ""
+}
+
+func (x *ReadLogsRequest) GetStartDate() int64 {
+	if x != nil {
+		return x.StartDate
+	}
+	return 0
+}
+
+func (x *ReadLogsRequest) GetEndDate() int64 {
+	if x != nil {
+		return x.EndDate
+	}
+	return 0
+}
+
+func (x *ReadLogsRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+// Ответ с прочитанными логами
+type ReadLogsResponse struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Success bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Message string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"` // Сообщение об ошибке или статус
+	// Сами строки логов
+	LogLines      []string `protobuf:"bytes,3,rep,name=log_lines,json=logLines,proto3" json:"log_lines,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReadLogsResponse) Reset() {
+	*x = ReadLogsResponse{}
+	mi := &file_service_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReadLogsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReadLogsResponse) ProtoMessage() {}
+
+func (x *ReadLogsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_service_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReadLogsResponse.ProtoReflect.Descriptor instead.
+func (*ReadLogsResponse) Descriptor() ([]byte, []int) {
+	return file_service_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ReadLogsResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *ReadLogsResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *ReadLogsResponse) GetLogLines() []string {
+	if x != nil {
+		return x.LogLines
+	}
+	return nil
+}
+
 var File_service_proto protoreflect.FileDescriptor
 
 const file_service_proto_rawDesc = "" +
@@ -118,9 +257,21 @@ const file_service_proto_rawDesc = "" +
 	"\x12SetLogLevelRequest\x12\x14\n" +
 	"\x05level\x18\x01 \x01(\tR\x05level\"/\n" +
 	"\x13SetLogLevelResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess2V\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\"w\n" +
+	"\x0fReadLogsRequest\x12\x14\n" +
+	"\x05level\x18\x01 \x01(\tR\x05level\x12\x1d\n" +
+	"\n" +
+	"start_date\x18\x02 \x01(\x03R\tstartDate\x12\x19\n" +
+	"\bend_date\x18\x03 \x01(\x03R\aendDate\x12\x14\n" +
+	"\x05limit\x18\x04 \x01(\x05R\x05limit\"c\n" +
+	"\x10ReadLogsResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1b\n" +
+	"\tlog_lines\x18\x03 \x03(\tR\blogLines2V\n" +
 	"\x0eLoggingControl\x12D\n" +
-	"\vSetLogLevel\x12\x19.proto.SetLogLevelRequest\x1a\x1a.proto.SetLogLevelResponseB\x18Z\x16NavControlSystem/protob\x06proto3"
+	"\vSetLogLevel\x12\x19.proto.SetLogLevelRequest\x1a\x1a.proto.SetLogLevelResponse2H\n" +
+	"\tLogReader\x12;\n" +
+	"\bReadLogs\x12\x16.proto.ReadLogsRequest\x1a\x17.proto.ReadLogsResponseB\x18Z\x16NavControlSystem/protob\x06proto3"
 
 var (
 	file_service_proto_rawDescOnce sync.Once
@@ -134,16 +285,20 @@ func file_service_proto_rawDescGZIP() []byte {
 	return file_service_proto_rawDescData
 }
 
-var file_service_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_service_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_service_proto_goTypes = []any{
 	(*SetLogLevelRequest)(nil),  // 0: proto.SetLogLevelRequest
 	(*SetLogLevelResponse)(nil), // 1: proto.SetLogLevelResponse
+	(*ReadLogsRequest)(nil),     // 2: proto.ReadLogsRequest
+	(*ReadLogsResponse)(nil),    // 3: proto.ReadLogsResponse
 }
 var file_service_proto_depIdxs = []int32{
 	0, // 0: proto.LoggingControl.SetLogLevel:input_type -> proto.SetLogLevelRequest
-	1, // 1: proto.LoggingControl.SetLogLevel:output_type -> proto.SetLogLevelResponse
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
+	2, // 1: proto.LogReader.ReadLogs:input_type -> proto.ReadLogsRequest
+	1, // 2: proto.LoggingControl.SetLogLevel:output_type -> proto.SetLogLevelResponse
+	3, // 3: proto.LogReader.ReadLogs:output_type -> proto.ReadLogsResponse
+	2, // [2:4] is the sub-list for method output_type
+	0, // [0:2] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -160,9 +315,9 @@ func file_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_service_proto_rawDesc), len(file_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   4,
 			NumExtensions: 0,
-			NumServices:   1,
+			NumServices:   2,
 		},
 		GoTypes:           file_service_proto_goTypes,
 		DependencyIndexes: file_service_proto_depIdxs,

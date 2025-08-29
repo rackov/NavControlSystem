@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,7 +28,7 @@ import (
 // сервиса RECEIVER.
 type ReceiverServer struct {
 	proto.UnimplementedReceiverControlServer
-
+	proto.UnimplementedLogReaderServer
 	cfg                  *Config
 	nc                   *nats.Conn
 	js                   nats.JetStreamContext
@@ -283,7 +287,10 @@ func (s *ReceiverServer) stopProtocolHandlersInternal() {
 // startGrpcServer инициализирует и запускает gRPC-сервер в отдельной горутине.
 func (s *ReceiverServer) startGrpcServer() error {
 	s.grpcServer = grpc.NewServer()
+	// Регистрируем сервис управления
 	proto.RegisterReceiverControlServer(s.grpcServer, s)
+	// --- РЕГИСТРИРУЕМ НОВЫЙ СЕРВИС -
+	proto.RegisterLogReaderServer(s.grpcServer, s) // ReceiverServer теперь реализует и LogReader
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", s.cfg.GrpcPort))
 	if err != nil {
@@ -526,4 +533,111 @@ func (s *ReceiverServer) DeletePort(ctx context.Context, req *proto.PortIdentifi
 			Port: int32(portCfg.Port),
 		},
 	}, nil
+}
+
+// ReadLogs реализует gRPC-метод для чтения и фильтрации логов.
+func (s *ReceiverServer) ReadLogs(ctx context.Context, req *proto.ReadLogsRequest) (*proto.ReadLogsResponse, error) {
+	logger.Infof("GRPC call: ReadLogs with filters: level='%s', start=%d, end=%d, limit=%d",
+		req.Level, req.StartDate, req.EndDate, req.Limit)
+
+	logLines, err := s.readLogFile(req)
+	if err != nil {
+		logger.Errorf("Failed to read log file: %v", err)
+		return &proto.ReadLogsResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
+	return &proto.ReadLogsResponse{
+		Success:  true,
+		Message:  fmt.Sprintf("Successfully read %d log entries.", len(logLines)),
+		LogLines: logLines,
+	}, nil
+}
+
+// readLogFile читает и фильтрует лог-файл.
+func (s *ReceiverServer) readLogFile(req *proto.ReadLogsRequest) ([]string, error) {
+	// 1. Определяем путь к лог-файлу из конфигурации
+	logFilePath := s.cfg.Logging.FilePath
+	if logFilePath == "" {
+		return nil, fmt.Errorf("logging to file is not configured (log_file_path is empty)")
+	}
+
+	// 2. Открываем файл
+	file, err := os.Open(logFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open log file %s: %w", logFilePath, err)
+	}
+	defer file.Close()
+
+	var results []string
+	scanner := bufio.NewScanner(file)
+
+	// Преобразуем UnixTime из запроса в time.Time для удобства сравнения
+	var startTime, endTime time.Time
+	if req.StartDate > 0 {
+		startTime = time.Unix(req.StartDate, 0)
+	}
+	if req.EndDate > 0 {
+		endTime = time.Unix(req.EndDate, 0)
+	}
+
+	// Регулярное выражение для парсинга уровня и времени из строки лога.
+	// Пример строки: time="2023-10-27T10:30:00+03:00" level=info msg="Some message"
+	// Мы захватываем время и уровень.
+	logLineRegex := regexp.MustCompile(`time="([^"]+)"\s+level=([^\s]+)`)
+
+	linesProcessed := 0
+	for scanner.Scan() {
+		line := scanner.Text()
+		linesProcessed++
+
+		// 3. Фильтрация по уровню
+		if req.Level != "" {
+			matches := logLineRegex.FindStringSubmatch(line)
+			if len(matches) < 3 {
+				continue // Строка не соответствует формату, пропускаем
+			}
+			lineLevel := matches[2]
+			if !strings.EqualFold(lineLevel, req.Level) {
+				continue
+			}
+		}
+
+		// 4. Фильтрация по дате
+		if !startTime.IsZero() || !endTime.IsZero() {
+			matches := logLineRegex.FindStringSubmatch(line)
+			if len(matches) < 2 {
+				continue
+			}
+			lineTimeStr := matches[1]
+			lineTime, err := time.Parse(time.RFC3339, lineTimeStr)
+			if err != nil {
+				continue // Не удалось распарсить время, пропускаем
+			}
+
+			if !startTime.IsZero() && lineTime.Before(startTime) {
+				continue
+			}
+			if !endTime.IsZero() && lineTime.After(endTime) {
+				continue
+			}
+		}
+
+		// 5. Если все фильтры пройдены, добавляем строку в результат
+		results = append(results, line)
+
+		// 6. Проверка лимита
+		if req.Limit > 0 && len(results) >= int(req.Limit) {
+			break
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error reading log file: %w", err)
+	}
+
+	logger.Debugf("Log reading complete. Processed %d lines, found %d matching entries.", linesProcessed, len(results))
+	return results, nil
 }
