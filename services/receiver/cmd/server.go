@@ -166,6 +166,9 @@ func (s *ReceiverServer) connectNats() error {
 
 // monitorNatsConnection слушает канал с уведомлениями и управляет обработчиками.
 func (s *ReceiverServer) monitorNatsConnection(ctx context.Context) {
+	logger.Info("NATS connection monitor started.")
+	defer logger.Info("NATS connection monitor stopped.")
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -175,16 +178,26 @@ func (s *ReceiverServer) monitorNatsConnection(ctx context.Context) {
 		// СЛУШАЕМ НАШ КАНАЛ, А НЕ CALLBACK
 		case isConnected := <-s.natsStatusChangeChan:
 			logger.Infof("Received NATS status change event. Connected: %v", isConnected)
-			if isConnected {
-				logger.Info("NATS reconnected, restarting protocol handlers.")
-				ServiceMetrics.SetGauge("nats_connected", 1)
-				if err := s.startProtocolHandlers(ctx, true); err != nil {
-					logger.Errorf("Failed to restart protocol handlers after NATS reconnect: %v", err)
+			ServiceMetrics.SetGauge("nats_connected", 1)
+
+			// Создаем задачу для воркера, чтобы не блокировать монитор
+			task := func() error {
+				if isConnected {
+					logger.Info("NATS reconnected, queuing task to restore handlers.")
+					return s.startProtocolHandlers(ctx, true)
+				} else {
+					logger.Warn("NATS connection lost, queuing task to stop handlers.")
+					s.stopProtocolHandlers() // stopProtocolHandlers просто ставит задачу
+					return nil
 				}
-			} else {
-				logger.Warn("NATS connection lost, stopping protocol handlers.")
-				ServiceMetrics.SetGauge("nats_connected", 0)
-				s.stopProtocolHandlers()
+			}
+
+			// Отправляем задачу в очередь. Если очередь полна, логируем и продолжаем.
+			select {
+			case s.configChangeChan <- task:
+				logger.Debug("NATS event task queued successfully.")
+			default:
+				logger.Error("Failed to queue NATS event task, config channel is full!")
 			}
 		}
 	}
@@ -234,7 +247,7 @@ func (s *ReceiverServer) startProtocolHandlers(ctx context.Context, restoreMode 
 	s.cfg.mu.RLock()
 	defer s.cfg.mu.RUnlock()
 
-	logger.Info("Starting protocol handlers (restoreMode: %t)...", restoreMode)
+	logger.Infof("Starting protocol handlers (restoreMode: %t)...", restoreMode)
 
 	portsToStart := make([]ProtocolConfig, 0)
 	if restoreMode {
@@ -243,7 +256,7 @@ func (s *ReceiverServer) startProtocolHandlers(ctx context.Context, restoreMode 
 		for _, cfgPort := range s.cfg.ProtocolConfigs {
 			if s.lastActivePortIDs[cfgPort.ID] {
 				portsToStart = append(portsToStart, cfgPort)
-				logger.Debug("Port %s (ID: %s) selected for restore.", cfgPort.Name, cfgPort.ID)
+				logger.Debugf("Port %s (ID: %s) selected for restore.", cfgPort.Name, cfgPort.ID)
 			}
 		}
 	} else {
@@ -273,13 +286,13 @@ func (s *ReceiverServer) startProtocolHandlers(ctx context.Context, restoreMode 
 		}
 
 		if err := handler.Start(ctx, s, protoCfg.Port); err != nil {
-			logger.Error("Failed to start %s handler on port %d (ID: %s): %v", protoCfg.Name, protoCfg.Port, protoCfg.ID, err)
+			logger.Errorf("Failed to start %s handler on port %d (ID: %s): %v", protoCfg.Name, protoCfg.Port, protoCfg.ID, err)
 			s.stopProtocolHandlersInternal()
 			return fmt.Errorf("failed to start %s handler", protoCfg.Name)
 		}
 
 		s.handlers[protoCfg.ID] = handler
-		logger.Info("%s handler started successfully on port %d (ID: %s)", protoCfg.Name, protoCfg.Port, protoCfg.ID)
+		logger.Infof("%s handler started successfully on port %d (ID: %s)", protoCfg.Name, protoCfg.Port, protoCfg.ID)
 	}
 
 	// После успешного восстановления, очищаем сохраненное состояние, чтобы не влиять на будущие перезапуски
@@ -293,9 +306,19 @@ func (s *ReceiverServer) startProtocolHandlers(ctx context.Context, restoreMode 
 
 // stopProtocolHandlers останавливает все активные обработчики.
 func (s *ReceiverServer) stopProtocolHandlers() {
-	s.handlersMu.Lock()
-	defer s.handlersMu.Unlock()
-	s.stopProtocolHandlersInternal()
+	task := func() error {
+		s.handlersMu.Lock()
+		defer s.handlersMu.Unlock()
+		s.stopProtocolHandlersInternal()
+		return nil
+	}
+
+	select {
+	case s.configChangeChan <- task:
+		logger.Debug("Stop handlers task queued.")
+	default:
+		logger.Error("Failed to queue stop handlers task, channel is full!")
+	}
 }
 
 // stopProtocolHandlersInternal - внутренняя версия без мьютекса.
@@ -322,7 +345,9 @@ func (s *ReceiverServer) stopProtocolHandlersInternal() {
 			}
 		}(name, handler)
 	}
+	logger.Info("Waiting for all handlers to stop...")
 	wg.Wait()
+	logger.Info("All handlers have stopped.")
 	s.handlers = make(map[string]protocol.ProtocolHandler)
 	logger.Info("All protocol handlers stopped.")
 }

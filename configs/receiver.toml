@@ -15,5 +15,11 @@ log_level = "info"
   port = 9998
   active = true
 
+[[protocols]]
+  id = "2e44a907-75db-4d95-bb6d-fc95a85107fc"
+  name = "ARNAVI"
+  port = 9999
+  active = true
+
 [logging]
   file_path = "./logs/receiver.log"
