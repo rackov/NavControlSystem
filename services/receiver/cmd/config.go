@@ -37,6 +37,10 @@ type Config struct {
 
 	// Добавляем путь к файлу, чтобы иметь возможность его перезаписать
 	configPath string
+
+	Nats struct {
+		PublishingDisabled bool `toml:"publishing_disabled"`
+	} `toml:"nats"`
 }
 
 // LoadConfig загружает и парсит TOML файл.

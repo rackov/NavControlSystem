@@ -45,20 +45,14 @@ type clientConnection struct {
 
 // NewConnectionManager создает новый экземпляр менеджера.
 func NewConnectionManager(cd ClientData) *ConnectionManager {
-	// Создаем базовый контекст, который будет отменен при вызове Stop()
-	ctx, cancel := context.WithCancel(context.Background())
 	return &ConnectionManager{
 		connections: make(map[string]*clientConnection),
 		clientData:  cd,
-		// ctx:         ctx,
-		// cancel:      cancel,
-		internalCtx:    ctx,
-		internalCancel: cancel,
 	}
 }
 
 // Start запускает прослушивание порта и принимает подключения.
-func (cm *ConnectionManager) Start(ctx context.Context, port int, connectionHandler func(ctx context.Context, conn net.Conn, clientID string)) error {
+func (cm *ConnectionManager) Start(parentCtx context.Context, port int, connectionHandler func(ctx context.Context, conn net.Conn, clientID string)) error {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
@@ -76,6 +70,10 @@ func (cm *ConnectionManager) Start(ctx context.Context, port int, connectionHand
 		return fmt.Errorf("failed to listen on port %d: %w", port, err)
 	}
 	logger.Infof("Connection manager started listening on port %d", port)
+	// --- ИЗМЕНЕНИЕ: Создаем внутренний контекст для управления жизненным циклом ---
+	// parentCtx нужен, чтобы если родительский контекст (весь сервис) отменяется,
+	// то и менеджер тоже остановился.
+	cm.internalCtx, cm.internalCancel = context.WithCancel(parentCtx)
 
 	cm.running = true
 	cm.wg.Add(1)
@@ -83,49 +81,43 @@ func (cm *ConnectionManager) Start(ctx context.Context, port int, connectionHand
 	// Передаем во внутренний контекст, а не внешний
 	go func() {
 		defer cm.wg.Done()
-		cm.acceptLoop(ctx, port, connectionHandler)
+		cm.acceptLoop(cm.internalCtx, port, connectionHandler)
 	}()
 
 	return nil
 }
 
-// acceptLoop — метод ConnectionManager, который непрерывно принимает входящие соединения
-// @param ctx: Контекст, используемый для корректного завершения работы
-// @param connectionHandler: Функция, обрабатывающая новые соединения с указанием контекста, соединения и идентификатора клиента
+// acceptLoop теперь использует внутренний контекст менеджера.
 func (cm *ConnectionManager) acceptLoop(ctx context.Context, port int, connectionHandler func(ctx context.Context, conn net.Conn, clientID string)) {
-	logger.Debug("Accept loop started.")
-	defer logger.Debug("Accept loop terminated.")
-
 	for {
-		// Проверяем контекст ПЕРЕД вызовом Accept()
-		// select {
-		// case <-ctx.Done():
-		// 	logger.Info("Accept loop: context cancelled, shutting down.")
-		// 	return
-		// default:
-		// 	// Продолжаем
-		// }
+		select {
+		// --- ИЗМЕНЕНИЕ: Проверяем сигнал отмены из ВНУТРЕННЕГО контекста ---
+		case <-ctx.Done():
+			logger.Infof("Accept loop for port %d shutting down due to context cancellation.", port)
+			return // Выходим из цикла, gracefully завершаем горутину
 
-		conn, err := cm.listener.Accept()
-		if err != nil {
-			// После отмены контекста и закрытия слушателя, Accept будет постоянно возвращать ошибку.
-			// Мы должны проверить контекст снова, чтобы выйти из цикла.
-			select {
-			case <-ctx.Done():
-				logger.Info("Accept loop: listener closed due to context cancellation.")
-				return
-			default:
-				logger.Errorf("Accept error: %v", err)
-				time.Sleep(1 * time.Second)
-				continue
+		default:
+			conn, err := cm.listener.Accept()
+			if err != nil {
+				// Проверяем, не связана ли ошибка с нашим закрытием слушателя
+				select {
+				case <-ctx.Done():
+					// Ошибка "use of closed network connection" ожидаема. Просто выходим.
+					return
+				default:
+					logger.Errorf("Accept error on port %d: %v", port, err)
+					time.Sleep(1 * time.Second)
+					continue
+				}
 			}
-		}
 
-		cm.wg.Add(1)
-		go func(c net.Conn) {
-			defer cm.wg.Done()
-			cm.handleNewConnection(ctx, c, port, connectionHandler) // Передаем контекст дальше
-		}(conn)
+			cm.wg.Add(1)
+			go func(c net.Conn) {
+				defer cm.wg.Done()
+				// Передаем ВНУТРЕННИЙ контекст в обработчик соединения
+				cm.handleNewConnection(ctx, c, port, connectionHandler)
+			}(conn)
+		}
 	}
 }
 
@@ -175,46 +167,34 @@ func (cm *ConnectionManager) Stop() error {
 	defer cm.mu.Unlock()
 
 	if !cm.running {
-		logger.Debug("Connection manager is not running, nothing to stop")
 		return nil
 	}
 
-	logger.Info("Stopping connection manager...")
+	logger.Info("Stopping connection manager for protocol ")
 
-	// 1. Сначала отменяем контекст. Это заставит acceptLoop выйти.
+	// --- ИЗМЕНЕНИЕ: Отправляем сигнал отмены через ВНУТРЕННЮЮ функцию ---
 	if cm.internalCancel != nil {
-		logger.Debug("Cancelling internal context...")
-		cm.internalCancel()
+		cm.internalCancel() // Это "разбудит" acceptLoop
 	}
 
-	// 2. Закрываем слушателя. Это приведет к тому, что listener.Accept() вернет ошибку,
-	// и acceptLoop завершится.
-	if cm.listener != nil {
-		logger.Debug("Closing listener...")
-		if err := cm.listener.Close(); err != nil {
-			logger.Errorf("Failed to close listener: %v", err)
-		}
-	}
-	// 2. Отменяем контексты для всех активных подключений.
-	// Это заставит горутины, обрабатывающие соединения, завершиться.
+	// Отменяем контексты для всех активных подключений
 	for addr, connInfo := range cm.connections {
 		logger.Debugf("Cancelling context for client %s (ID: %s)", addr, connInfo.clientID)
 		connInfo.cancelFunc()
-		// connInfo.conn.Close() вызывается в defer внутри handleConnection
+		// connInfo.conn.Close() вызывается в defer внутри handleNewConnection
 	}
 
-	// 3. Сбрасываем состояние, чтобы менеджер можно было запустить снова.
+	// Закрываем сам слушатель.
+	if cm.listener != nil {
+		if err := cm.listener.Close(); err != nil {
+			logger.Errorf("Failed to close listener for protocol %s: %v", "cm.clientData.GetName()", err)
+		}
+	}
+
 	cm.running = false
+	cm.wg.Wait() // Ждем, пока acceptLoop и все handleConnection горутины завершатся
 
-	// 4. Ждем, пока все горутины (acceptLoop и handleNewConnection) завершатся.
-
-	logger.Debug("Waiting for acceptLoop to terminate...")
-	cm.wg.Wait()
-
-	// // Важно создать новый контекст для следующего запуска
-	// cm.ctx, cm.cancel = context.WithCancel(context.Background())
-
-	logger.Info("Connection manager stopped gracefully.")
+	logger.Infof("Connection manager for protocol %s stopped.", "cm.clientData.GetName()")
 	return nil
 }
 

@@ -87,6 +87,9 @@ func (h *ArnaviHandler) handleConnection(ctx context.Context, conn net.Conn, cli
 		select {
 		case <-ctx.Done():
 			logger.Infof("Arnavi processing for client ID %s cancelled", clientID)
+			if conn != nil {
+				conn.Close()
+			}
 			return
 		default:
 			// ... логика парсинга пакета EGTS ...
@@ -101,10 +104,15 @@ func (h *ArnaviHandler) handleConnection(ctx context.Context, conn net.Conn, cli
 			if h.publisher.IsConnected() {
 				if err := h.publisher.Publish(&navData); err != nil {
 					logger.Errorf("Failed to publish Arnavi data for client ID %s: %v", clientID, err)
+					// conn.Close()
 				} else {
 					logger.Debugf("Arnavi data for client ID %s published", clientID)
 				}
 			} else {
+				if conn != nil {
+					conn.Close()
+				}
+
 				logger.Warnf("NATS is not connected, Arnavi data for client ID %s not published", clientID)
 			}
 			time.Sleep(5 * time.Second)

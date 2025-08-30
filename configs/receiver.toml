@@ -23,3 +23,9 @@ log_level = "info"
 
 [logging]
   file_path = "./logs/receiver.log"
+
+# Настройки NATS
+[nats]
+# Временно отключить публикацию в NATS Stream.
+# true - отключить, false - включить.
+publishing_disabled = true
