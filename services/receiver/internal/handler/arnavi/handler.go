@@ -32,11 +32,13 @@ func (h *ArnaviHandler) Start(ctx context.Context, publisher protocol.DataPublis
 
 // GetName возвращает имя протокола
 func (h *ArnaviHandler) GetName() string {
-	return "Arnavi"
+	return "ARNAVI"
 }
 
 // Stop останавливает ConnectionManager
 func (h *ArnaviHandler) Stop() error {
+	logger.Info("Stopping Arnavi handler...")
+
 	return h.connManager.Stop()
 }
 

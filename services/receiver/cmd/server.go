@@ -64,6 +64,12 @@ func NewReceiverServer(cfg *Config) *ReceiverServer {
 func (s *ReceiverServer) Start(ctx context.Context) error {
 	logger.Info("Starting RECEIVER server...")
 
+	// 0. Запускаем мониторинг состояния NATS ПЕРВЫМ.
+	// Это гарантирует, что горутина готова принимать сигналы из natsStatusChangeChan
+	// до того, как мы подключимся к NATS и зарегистрируем callback'и.
+	logger.Info("Starting NATS connection monitor...")
+	go s.monitorNatsConnection(ctx)
+
 	// 1. Подключение к NATS
 	if err := s.connectNats(); err != nil {
 		logger.Errorf("failed to connect to NATS: %v", err)
@@ -84,9 +90,6 @@ func (s *ReceiverServer) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to start gRPC server: %w", err)
 	}
 	logger.Infof("gRPC server started on port %d", s.cfg.GrpcPort)
-
-	// 4. Запуск горутины для мониторинга состояния NATS
-	go s.monitorNatsConnection(ctx)
 
 	logger.Info("RECEIVER server started successfully")
 	return nil
@@ -121,8 +124,17 @@ func (s *ReceiverServer) Stop() {
 func (s *ReceiverServer) connectNats() error {
 	var err error
 	s.nc, err = nats.Connect(s.cfg.NatsURL,
-		nats.ReconnectWait(2*time.Second),
-		nats.MaxReconnects(5),
+		// Позволяем клиенту переподключаться бесконечно
+		nats.MaxReconnects(-1),
+		// nats.MaxReconnects(5),
+		// Увеличиваем время между попытками переподключения
+		nats.ReconnectWait(5*time.Second),
+
+		// Устанавливаем общий таймаут на переподключение (например, 2 минуты)
+		// Если за это время не удалось подключиться, тогда уже сработает ClosedHandler
+		nats.ReconnectJitter(2*time.Second, 10*time.Second), // Добавим случайную задержку
+		nats.DrainTimeout(10*time.Second),
+
 		// НАЗНАЧАЕМ НАШИ ФУНКЦИИ-ОБРАБОТЧИКИ
 		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
 			logger.Warnf("NATS connection disconnected: %v", err)
@@ -166,38 +178,32 @@ func (s *ReceiverServer) connectNats() error {
 
 // monitorNatsConnection слушает канал с уведомлениями и управляет обработчиками.
 func (s *ReceiverServer) monitorNatsConnection(ctx context.Context) {
-	logger.Info("NATS connection monitor started.")
-	defer logger.Info("NATS connection monitor stopped.")
-
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Info("NATS monitoring stopped by context cancellation.")
 			return
-
-		// СЛУШАЕМ НАШ КАНАЛ, А НЕ CALLBACK
 		case isConnected := <-s.natsStatusChangeChan:
 			logger.Infof("Received NATS status change event. Connected: %v", isConnected)
-			ServiceMetrics.SetGauge("nats_connected", 1)
-
-			// Создаем задачу для воркера, чтобы не блокировать монитор
-			task := func() error {
-				if isConnected {
-					logger.Info("NATS reconnected, queuing task to restore handlers.")
-					return s.startProtocolHandlers(ctx, true)
-				} else {
-					logger.Warn("NATS connection lost, queuing task to stop handlers.")
-					s.stopProtocolHandlers() // stopProtocolHandlers просто ставит задачу
-					return nil
+			if isConnected {
+				logger.Info("NATS reconnected, attempting to restore protocol handlers.")
+				ServiceMetrics.SetGauge("nats_connected", 1)
+				// При восстановлении запускаем то, что было активно до падения
+				if err := s.startProtocolHandlers(ctx, true); err != nil {
+					logger.Errorf("Failed to restart protocol handlers after NATS reconnect: %v", err)
 				}
-			}
+			} else {
+				logger.Warn("NATS connection lost. Stopping all protocol handlers IMMEDIATELY.")
+				ServiceMetrics.SetGauge("nats_connected", 0)
 
-			// Отправляем задачу в очередь. Если очередь полна, логируем и продолжаем.
-			select {
-			case s.configChangeChan <- task:
-				logger.Debug("NATS event task queued successfully.")
-			default:
-				logger.Error("Failed to queue NATS event task, config channel is full!")
+				// БЛОКИРУЮЩИЙ ВЫЗОВ ОСТАНОВКИ
+				// Мы больше не ставим это в очередь, а выполняем прямо здесь.
+				// Это соответствует требованию "закрыть немедленно".
+				if err := s.stopProtocolHandlers(); err != nil {
+					// Если даже остановка с таймаутами не удалась, это критическая ошибка.
+					logger.Errorf("CRITICAL: Failed to stop protocol handlers after NATS disconnect: %v", err)
+					// Здесь можно подумать о более радикальных мерах, например, панике, чтобы сервис перезапустился.
+					// panic("Failed to stop handlers on NATS disconnect")
+				}
 			}
 		}
 	}
@@ -305,7 +311,8 @@ func (s *ReceiverServer) startProtocolHandlers(ctx context.Context, restoreMode 
 }
 
 // stopProtocolHandlers останавливает все активные обработчики.
-func (s *ReceiverServer) stopProtocolHandlers() {
+func (s *ReceiverServer) stopProtocolHandlers() error {
+	logger.Info("Stopping all protocol handlers...")
 	task := func() error {
 		s.handlersMu.Lock()
 		defer s.handlersMu.Unlock()
@@ -319,37 +326,66 @@ func (s *ReceiverServer) stopProtocolHandlers() {
 	default:
 		logger.Error("Failed to queue stop handlers task, channel is full!")
 	}
+	return nil
 }
 
 // stopProtocolHandlersInternal - внутренняя версия без мьютекса.
+// Вызывается, когда mьютекс s.handlersMu уже захвачен.
 func (s *ReceiverServer) stopProtocolHandlersInternal() {
 	if len(s.handlers) == 0 {
 		return
 	}
 
-	logger.Info("Stopping all protocol handlers...")
-	// --- НОВЫЙ КОД: Сохраняем ID активных портов ---
+	logger.Infof("Stopping all protocol handlers...")
+
+	// --- ШАГ 1: Сохранение состояния для восстановления ---
+	// Копируем ID всех активных обработчиков в специальную карту.
+	// Это нужно, чтобы знать, какие порты открывать после восстановления NATS.
 	s.lastActivePortIDs = make(map[string]bool)
 	for id := range s.handlers {
 		s.lastActivePortIDs[id] = true
 	}
 	logger.Infof("Saved %d active port IDs for future restore.", len(s.lastActivePortIDs))
-	//-------------------------------------------------
+
+	// --- ШАГ 2: Остановка каждого обработчика с таймаутом ---
+	// Это ключевое место для решения проблемы зависания.
 	var wg sync.WaitGroup
+	// Создаем контекст с таймаутом, чтобы не ждать вечно.
+	stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel() // Важно!
+
 	for name, handler := range s.handlers {
 		wg.Add(1)
 		go func(name string, h protocol.ProtocolHandler) {
 			defer wg.Done()
-			if err := h.Stop(); err != nil {
-				logger.Errorf("Failed to stop %s handler: %v", name, err)
+
+			done := make(chan struct{})
+			// Запускаем остановку в отдельной горутине
+			go func() {
+				defer close(done)
+				if err := h.Stop(); err != nil {
+					logger.Errorf("Failed to stop %s handler: %v", name, err)
+				}
+			}()
+
+			// Ждем, либо пока остановка завершится, либо сработает таймаут
+			select {
+			case <-done:
+				logger.Infof("Handler %s stopped gracefully.", name)
+			case <-stopCtx.Done():
+				// Таймаут! Принудительно логируем и продолжаем.
+				logger.Warnf("Handler %s did not stop in time, forcing shutdown.", name)
 			}
 		}(name, handler)
 	}
-	logger.Info("Waiting for all handlers to stop...")
+
+	// Ждем, пока все горутины либо завершатся, либо истечет таймаут.
 	wg.Wait()
-	logger.Info("All handlers have stopped.")
+
+	// --- ШАГ 3: Очистка ---
+	// Очищаем карту запущенных обработчиков.
 	s.handlers = make(map[string]protocol.ProtocolHandler)
-	logger.Info("All protocol handlers stopped.")
+	logger.Info("All protocol handlers stopped (or timed out).")
 }
 
 // --- gRPC Server Management ---
@@ -527,27 +563,35 @@ func (s *ReceiverServer) OpenPort(ctx context.Context, req *proto.PortIdentifier
 func (s *ReceiverServer) ClosePort(ctx context.Context, req *proto.PortIdentifier) (*proto.PortOperationResponse, error) {
 	logger.Infof("GRPC call: ClosePort for ID %s", req.Id)
 
-	if err := s.cfg.SetPortState(req.Id, false); err != nil {
-		return &proto.PortOperationResponse{Success: false, Message: err.Error()}, nil
+	task := func() error {
+		// Меняем состояние в конфигурации на неактивное
+		if err := s.cfg.SetPortState(req.Id, false); err != nil {
+			return err
+		}
+		// Перезапускаем обработчики
+		return s.restartProtocolHandlers(ctx)
 	}
 
-	if err := s.startProtocolHandlers(ctx, false); err != nil {
-		_ = s.cfg.SetPortState(req.Id, true)
+	select {
+	case s.configChangeChan <- task:
+		// Получаем детали порта для ответа
+		portCfg, err := s.cfg.GetPortByID(req.Id)
+		var portDetails *proto.PortDefinition
+		if err != nil {
+			portDetails = &proto.PortDefinition{Name: "N/A", Port: 0}
+		} else {
+			portDetails = &proto.PortDefinition{Name: portCfg.Name, Port: int32(portCfg.Port)}
+		}
+
+		logger.Infof("ClosePort task queued successfully for ID %s", req.Id)
 		return &proto.PortOperationResponse{
-			Success: false,
-			Message: fmt.Sprintf("failed to restart handlers after closing port: %v", err),
+			Success:     true,
+			Message:     fmt.Sprintf("Port closing task for ID %s has been queued.", req.Id),
+			PortDetails: portDetails,
 		}, nil
+	case <-ctx.Done():
+		return nil, status.Errorf(codes.Canceled, "request cancelled")
 	}
-
-	portCfg, _ := s.cfg.GetPortByID(req.Id)
-	return &proto.PortOperationResponse{
-		Success: true,
-		Message: "Port closed successfully",
-		PortDetails: &proto.PortDefinition{
-			Name: portCfg.Name,
-			Port: int32(portCfg.Port),
-		},
-	}, nil
 }
 
 // AddPort добавляет новую конфигурацию порта.

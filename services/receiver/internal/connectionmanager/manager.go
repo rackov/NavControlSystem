@@ -83,7 +83,7 @@ func (cm *ConnectionManager) Start(ctx context.Context, port int, connectionHand
 	// Передаем во внутренний контекст, а не внешний
 	go func() {
 		defer cm.wg.Done()
-		cm.acceptLoop(cm.internalCtx, connectionHandler)
+		cm.acceptLoop(ctx, port, connectionHandler)
 	}()
 
 	return nil
@@ -92,88 +92,19 @@ func (cm *ConnectionManager) Start(ctx context.Context, port int, connectionHand
 // acceptLoop — метод ConnectionManager, который непрерывно принимает входящие соединения
 // @param ctx: Контекст, используемый для корректного завершения работы
 // @param connectionHandler: Функция, обрабатывающая новые соединения с указанием контекста, соединения и идентификатора клиента
-/* func (cm *ConnectionManager) acceptLoop(ctx context.Context, connectionHandler func(ctx context.Context, conn net.Conn, clientID string)) {
-	for {
-		select {
-		// Если контекст менеджера был отменен (вызван Stop()), выходим из цикла
-		case <-ctx.Done():
-			logger.Info("Accept loop stopped by context cancellation.")
-			return
-		default:
-			// --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-			// Проверяем, является ли слушатель TCPListener'ом
-			tcpListener, ok := cm.listener.(*net.TCPListener)
-			if !ok {
-				// Если это не TCPListener (например, Unix-сокет), мы не можем установить таймаут.
-				// В таком случае просто ждем соединение без таймаута.
-				logger.Warn("Listener is not a TCPListener, cannot set deadline. Waiting indefinitely.")
-				conn, err := cm.listener.Accept()
-				if err != nil {
-					if ctx.Err() != nil {
-						logger.Info("Accept loop stopped during accept due to context cancellation.")
-						return
-					}
-					logger.Errorf("Accept error: %v. Stopping accept loop.", err)
-					return
-				}
-				// Сбрасываем таймаут для самого соединения
-				conn.SetDeadline(time.Time{})
-
-				// --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-				cm.wg.Add(1)
-				go func(c net.Conn) {
-					defer cm.wg.Done()
-					cm.handleNewConnection(ctx, c, connectionHandler)
-				}(conn)
-				continue // Переходим к следующей итерации
-			}
-
-			// Если это TCPListener, устанавливаем таймаут для операции Accept
-			tcpListener.SetDeadline(time.Now().Add(5 * time.Second))
-			conn, err := cm.listener.Accept()
-
-			if err != nil {
-				// Проверяем, не является ли ошибка таймаутом
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					// Это просто таймаут, ничего страшного, продолжаем цикл
-					continue
-				}
-				// Если контекст был отменен, пока мы ждали соединения
-				if ctx.Err() != nil {
-					logger.Infof("Accept loop stopped during accept due to context cancellation.")
-					return
-				}
-				// Любая другая ошибка (например, "use of closed network connection")
-				// означает, что слушатель закрыт. Выходим из цикла.
-				logger.Errorf("Accept error: %v. Stopping accept loop.", err)
-				return
-			}
-
-			// Сбрасываем таймаут после успешного приема соединения
-			conn.SetDeadline(time.Time{})
-
-			cm.wg.Add(1)
-			go func(c net.Conn) {
-				defer cm.wg.Done()
-				cm.handleNewConnection(ctx, c, connectionHandler)
-			}(conn)
-		}
-	}
-}
-*/
-func (cm *ConnectionManager) acceptLoop(ctx context.Context, connectionHandler func(ctx context.Context, conn net.Conn, clientID string)) {
+func (cm *ConnectionManager) acceptLoop(ctx context.Context, port int, connectionHandler func(ctx context.Context, conn net.Conn, clientID string)) {
 	logger.Debug("Accept loop started.")
 	defer logger.Debug("Accept loop terminated.")
 
 	for {
 		// Проверяем контекст ПЕРЕД вызовом Accept()
-		select {
-		case <-ctx.Done():
-			logger.Info("Accept loop: context cancelled, shutting down.")
-			return
-		default:
-			// Продолжаем
-		}
+		// select {
+		// case <-ctx.Done():
+		// 	logger.Info("Accept loop: context cancelled, shutting down.")
+		// 	return
+		// default:
+		// 	// Продолжаем
+		// }
 
 		conn, err := cm.listener.Accept()
 		if err != nil {
@@ -193,12 +124,12 @@ func (cm *ConnectionManager) acceptLoop(ctx context.Context, connectionHandler f
 		cm.wg.Add(1)
 		go func(c net.Conn) {
 			defer cm.wg.Done()
-			cm.handleNewConnection(ctx, c, connectionHandler) // Передаем контекст дальше
+			cm.handleNewConnection(ctx, c, port, connectionHandler) // Передаем контекст дальше
 		}(conn)
 	}
 }
 
-func (cm *ConnectionManager) handleNewConnection(parentCtx context.Context, conn net.Conn, connectionHandler func(ctx context.Context, conn net.Conn, clientID string)) {
+func (cm *ConnectionManager) handleNewConnection(parentCtx context.Context, conn net.Conn, port int, connectionHandler func(ctx context.Context, conn net.Conn, clientID string)) {
 	defer conn.Close()
 
 	clientAddr := conn.RemoteAddr().String()
@@ -210,7 +141,8 @@ func (cm *ConnectionManager) handleNewConnection(parentCtx context.Context, conn
 		logger.Errorf("Failed to authorize client %s: %v", clientAddr, err)
 		return
 	}
-	logger.Infof("Client %s authorized with ID: %s", clientAddr, clientID)
+	//  protocolName:=cm.clientData.GetName()
+	logger.Infof("Client %s authorized with ID: %s on port %d ", clientAddr, clientID, port)
 
 	// 2. Регистрация подключения
 	connCtx, cancel := context.WithCancel(parentCtx)
@@ -262,6 +194,13 @@ func (cm *ConnectionManager) Stop() error {
 		if err := cm.listener.Close(); err != nil {
 			logger.Errorf("Failed to close listener: %v", err)
 		}
+	}
+	// 2. Отменяем контексты для всех активных подключений.
+	// Это заставит горутины, обрабатывающие соединения, завершиться.
+	for addr, connInfo := range cm.connections {
+		logger.Debugf("Cancelling context for client %s (ID: %s)", addr, connInfo.clientID)
+		connInfo.cancelFunc()
+		// connInfo.conn.Close() вызывается в defer внутри handleConnection
 	}
 
 	// 3. Сбрасываем состояние, чтобы менеджер можно было запустить снова.
@@ -331,3 +270,5 @@ func (cm *ConnectionManager) IsRunning() bool {
 	defer cm.mu.Unlock()
 	return cm.running
 }
+
+// GetName возвращает имя протокола.

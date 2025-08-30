@@ -102,70 +102,40 @@ func WithError(err error) *logrus.Entry {
 	return defaultLogger.WithError(err)
 }
 func Trace(args ...interface{}) {
-	if defaultLogger == nil {
-		return
-	}
 	defaultLogger.Trace(args...)
 }
 func Tracef(format string, args ...interface{}) {
-	if defaultLogger == nil {
-		return
-	}
 	defaultLogger.Tracef(format, args...)
 }
 func Info(args ...interface{}) {
-	if defaultLogger == nil {
-		return
-	}
 	defaultLogger.Info(args...)
 }
 
 func Debug(args ...interface{}) {
-	if defaultLogger == nil {
-		return
-	}
 	defaultLogger.Debug(args...)
 }
 
 func Warn(args ...interface{}) {
-	if defaultLogger == nil {
-		return
-	}
 	defaultLogger.Warn(args...)
 }
 
 func Error(args ...interface{}) {
-	if defaultLogger == nil {
-		return
-	}
 	defaultLogger.Error(args...)
 }
 
 func Infof(format string, args ...interface{}) {
-	if defaultLogger == nil {
-		return
-	}
 	defaultLogger.Infof(format, args...)
 }
 
 func Debugf(format string, args ...interface{}) {
-	if defaultLogger == nil {
-		return
-	}
 	defaultLogger.Debugf(format, args...)
 }
 
 func Warnf(format string, args ...interface{}) {
-	if defaultLogger == nil {
-		return
-	}
 	defaultLogger.Warnf(format, args...)
 }
 
 func Errorf(format string, args ...interface{}) {
-	if defaultLogger == nil {
-		return
-	}
 	defaultLogger.Errorf(format, args...)
 }
 
