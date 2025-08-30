@@ -1,7 +1,7 @@
 grpc_port = 50051
 metrics_port = 9091
 nats_url = "nats://localhost:4222"
-log_level = "info"
+log_level = "DEBUG"
 
 [[protocols]]
   id = "c3d4e5f6-a7b8-9012-3456-7890abcdef2"

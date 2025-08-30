@@ -65,25 +65,31 @@ func NewReceiverServer(cfg *Config) *ReceiverServer {
 }
 
 // Start запускает все компоненты сервиса.
+// Start запускает все компоненты сервиса в правильной последовательности.
 func (s *ReceiverServer) Start(ctx context.Context) error {
 	logger.Info("Starting RECEIVER server...")
 
-	// 1. Запускаем мониторинг состояния NATS ПЕРВЫМ.
-	logger.Info("Starting NATS connection monitor...")
-	go s.monitorNatsConnection(ctx)
+	// 1. Запускаем мониторинг событий NATS.
+	// Эта функция теперь запускает горутину natsEventLoop и сразу возвращает управление.
+	logger.Info("Starting NATS monitor.")
+	s.monitorNatsConnection(ctx)
 
-	// 2. Запускаем процесс подключения к NATS (неблокирующий).
+	// 2. Запускаем процесс подключения к NATS.
+	// Это неблокирующий вызов. Он инициирует подключение, но не ждет его завершения.
+	// Вся дальнейшая работа с NATS будет обрабатываться через natsEventLoop.
 	logger.Info("Initiating NATS connection...")
 	if err := s.connectNats(); err != nil {
-		// В нашей новой логике connectNats не возвращает ошибку, но на случай будущих изменений:
+		// Ошибка при первоначальном подключении не является фатальной.
+		// natsEventLoop обработает это событие и примет меры (например, попытается запустить обработчики с restoreMode=false).
 		logger.Errorf("Failed to initiate NATS connection: %v", err)
-		// Это не фатально, т.к. мониторинг уже запущен.
 	}
 
 	// 3. Запускаем обработчики протоколов.
-	// Вызываем с restoreMode=false, т.к. это первый запуск.
+	// Это первый запуск, поэтому используем restoreMode=false.
+	// Это гарантирует, что порты будут запущены согласно конфигурации.
 	if err := s.startProtocolHandlers(ctx, false); err != nil {
 		logger.Errorf("Failed to start protocol handlers: %v", err)
+		// Если не удалось запустить обработчики, это фатальная ошибка для старта.
 		return fmt.Errorf("failed to start protocol handlers: %w", err)
 	}
 
@@ -92,10 +98,19 @@ func (s *ReceiverServer) Start(ctx context.Context) error {
 		logger.Errorf("Failed to start gRPC server: %v", err)
 		return fmt.Errorf("failed to start gRPC server: %w", err)
 	}
+	logger.Infof("gRPC server started on port %d", s.cfg.GrpcPort)
 
 	// 5. Запускаем воркер для изменений конфигурации.
 	s.startConfigWorker(ctx)
 	logger.Info("Configuration worker started.")
+
+	// // 6. Запускаем сервер Prometheus метрик.
+	// go func() {
+	// 	if err := monitoring.StartMetricsServer(s.cfg.MetricsPort); err != nil {
+	// 		logger.Errorf("Failed to start metrics server: %v", err)
+	// 	}
+	// }()
+	// logger.Infof("Prometheus metrics server started on port %d", s.cfg.MetricsPort)
 
 	logger.Info("RECEIVER server started successfully")
 	return nil
@@ -205,35 +220,10 @@ func (s *ReceiverServer) connectNats() error {
 
 // monitorNatsConnection слушает канал с уведомлениями и управляет обработчиками.
 func (s *ReceiverServer) monitorNatsConnection(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case isConnected := <-s.natsStatusChangeChan:
-			logger.Infof("Received NATS status change event. Connected: %v", isConnected)
-			if isConnected {
-				logger.Info("NATS reconnected, attempting to restore protocol handlers.")
-				ServiceMetrics.SetGauge("nats_connected", 1)
-				// При восстановлении запускаем то, что было активно до падения
-				if err := s.startProtocolHandlers(ctx, true); err != nil {
-					logger.Errorf("Failed to restart protocol handlers after NATS reconnect: %v", err)
-				}
-			} else {
-				logger.Warn("NATS connection lost. Stopping all protocol handlers IMMEDIATELY.")
-				ServiceMetrics.SetGauge("nats_connected", 0)
-
-				// БЛОКИРУЮЩИЙ ВЫЗОВ ОСТАНОВКИ
-				// Мы больше не ставим это в очередь, а выполняем прямо здесь.
-				// Это соответствует требованию "закрыть немедленно".
-				if err := s.stopProtocolHandlers(); err != nil {
-					// Если даже остановка с таймаутами не удалась, это критическая ошибка.
-					logger.Errorf("CRITICAL: Failed to stop protocol handlers after NATS disconnect: %v", err)
-					// Здесь можно подумать о более радикальных мерах, например, панике, чтобы сервис перезапустился.
-					// panic("Failed to stop handlers on NATS disconnect")
-				}
-			}
-		}
-	}
+	logger.Info("Starting NATS monitor.")
+	// Запускаем цикл обработки событий в отдельной горутине.
+	go s.natsEventLoop(ctx)
+	// Эта горутина теперь просто завершается.
 }
 
 // Реализация интерфейса DataPublisher для передачи в обработчики.
@@ -879,4 +869,39 @@ func (s *ReceiverServer) startConfigWorker(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+// natsEventLoop содержит логику обработки событий от NATS.
+// Он запускается один раз и работает до отмены контекста.
+func (s *ReceiverServer) natsEventLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Info("NATS event loop stopped.")
+			return
+		case isConnected := <-s.natsStatusChangeChan:
+			logger.Infof("NATS event loop received event: Connected=%v", isConnected)
+			if isConnected {
+				logger.Info("NATS is connected. Ensuring handlers are running.")
+				// Проверяем, запущены ли вообще обработчики. Если нет, запускаем.
+				s.handlersMu.RLock()
+				if len(s.handlers) == 0 {
+					s.handlersMu.RUnlock()
+					logger.Info("No handlers are running, starting them.")
+					if err := s.startProtocolHandlers(ctx, true); err != nil {
+						logger.Errorf("Failed to start protocol handlers: %v", err)
+					}
+				} else {
+					s.handlersMu.RUnlock()
+					logger.Debug("Handlers are already running, no action needed.")
+				}
+			} else {
+				logger.Warn("NATS is disconnected. Stopping all handlers.")
+				// Остановка должна быть атомарной и быстрой.
+				if err := s.stopProtocolHandlers(); err != nil {
+					logger.Errorf("Failed to stop protocol handlers: %v", err)
+				}
+			}
+		}
+	}
 }

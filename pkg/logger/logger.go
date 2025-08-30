@@ -72,7 +72,7 @@ func Init(level logrus.Level, filePath ...string) {
 func ParseLevel(levelStr string) (logrus.Level, error) {
 	level, err := logrus.ParseLevel(levelStr)
 	if err != nil {
-		return INFO, err // Возвращаем уровень по умолчанию в случае ошибки
+		return DEBUG, err // Возвращаем уровень по умолчанию в случае ошибки
 	}
 	return level, nil
 }
