@@ -10,85 +10,45 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// ServiceMetrics - это структура, которая хранит все метрики для одного сервиса.
-// Это удобный способ передавать метрики в разные части приложения.
-type ServiceMetrics struct {
-	// OperationCounters должен хранить тип-вектор.
-	OperationCounters map[string]*prometheus.CounterVec
+// --- Общие метрики, которые будут собираться для всех сервисов ---
 
-	// OperationDurations должен хранить тип-вектор.
-	OperationDurations map[string]*prometheus.HistogramVec
+// Метрики для стандартного коллектора Go (горутины, GC, память и т.д.)
+// Они регистрируются автоматически.
+var (
+	// Пример кастомной метрики, которую могут использовать сервисы
+	// Это просто шаблон, сервисы могут создавать свои метрики аналогичным образом.
+	OperationCount = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "receiver_operations_total",
+		Help: "Total number of operations processed by the receiver.",
+	}, []string{"operation_type", "status"}) // operation_type: create_port, status: success, failure
 
-	// ErrorCounters должен хранить тип-вектор.
-	ErrorCounters map[string]*prometheus.CounterVec
+	OperationDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "receiver_operation_duration_seconds",
+		Help:    "Duration of receiver operations.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"operation_type"})
+)
 
-	// ServiceGauges корректен как простой Gauge.
-	ServiceGauges map[string]prometheus.Gauge
-}
-
-// NewServiceMetrics - это конструктор для ServiceMetrics.
-// Он создает и регистрирует все необходимые метрики.
-func NewServiceMetrics(serviceName string) *ServiceMetrics {
-	commonLabels := prometheus.Labels{"service": serviceName}
-
-	// Эта инициализация теперь соответствует типам полей структуры.
-	m := &ServiceMetrics{
-		OperationCounters:  make(map[string]*prometheus.CounterVec),
-		OperationDurations: make(map[string]*prometheus.HistogramVec),
-		ErrorCounters:      make(map[string]*prometheus.CounterVec),
-		ServiceGauges:      make(map[string]prometheus.Gauge),
+// Start запускает HTTP-сервер для экспорта метрик Prometheus.
+// Он блокирует выполнение, поэтому его следует запускать в отдельной горутине.
+func Start(port uint32) error {
+	if port == 0 {
+		return fmt.Errorf("monitoring port cannot be 0")
 	}
 
-	// --- Предопределенные метрики ---
+	// Регистрируем стандартные коллекторы Go и процесса.
+	// promauto.Register() делает это автоматически для метрик, созданных через promauto.
+	// Если бы мы создавали метрики вручную, нам пришлось бы регистрировать их в реестре.
+	// prometheus.MustRegister(prometheus.NewGoCollector())
+	// prometheus.MustRegister(prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
 
-	// Сохраняем сам CounterVec, а не конкретный Counter.
-	m.OperationCounters["operations_total"] = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name:        "app_operations_total",
-			Help:        "The total number of processed operations.",
-			ConstLabels: commonLabels,
-		},
-		[]string{"operation_name"},
-	) // <-- УДАЛИТЬ .WithLabelValues("default")
+	// Создаем обработчик для пути /metrics
+	handler := promhttp.Handler()
 
-	// Сохраняем сам HistogramVec.
-	m.OperationDurations["operation_duration_seconds"] = promauto.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:        "app_operation_duration_seconds",
-			Help:        "A histogram of the operation duration in seconds.",
-			ConstLabels: commonLabels,
-			Buckets:     prometheus.DefBuckets,
-		},
-		[]string{"operation_name"},
-	)
+	// Регистрируем его в стандартном mux (роутере) Go
+	http.Handle("/metrics", handler)
 
-	// Сохраняем сам CounterVec.
-	m.ErrorCounters["errors_total"] = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name:        "app_errors_total",
-			Help:        "The total number of errors.",
-			ConstLabels: commonLabels,
-		},
-		[]string{"error_type"},
-	)
-
-	// Инициализация Gauge остается корректной.
-	m.ServiceGauges["active_connections"] = promauto.NewGauge(prometheus.GaugeOpts{
-		Name:        "app_active_connections",
-		Help:        "The current number of active connections.",
-		ConstLabels: commonLabels,
-	})
-
-	return m
-}
-
-// StartMetricsServer - это хэлпер, который запускает HTTP-сервер для экспорта метрик.
-// Он блокирует выполнение, поэтому его следует запускать в отдельной горутине.
-func StartMetricsServer(port int) error {
-	// Регистрируем стандартный обработчик Prometheus, который будет отдавать метрики
-	// по пути /metrics.
-	http.Handle("/metrics", promhttp.Handler())
-
+	// Создаем и запускаем HTTP-сервер
 	addr := fmt.Sprintf(":%d", port)
 	server := &http.Server{
 		Addr:         addr,
@@ -96,44 +56,20 @@ func StartMetricsServer(port int) error {
 		WriteTimeout: 5 * time.Second,
 	}
 
-	fmt.Printf("Starting Prometheus metrics server on %s\n", addr)
-	// ListenAndServe блокирует выполнение, поэтому его нужно вызывать в горутине.
+	fmt.Printf("Starting monitoring server on %s\n", addr)
+
+	// Запускаем сервер. Эта функция блокируется, пока сервер не будет остановлен.
+	// Если сервер не может стартовать (например, порт занят), он вернет ошибку.
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("failed to start metrics server: %w", err)
+		return fmt.Errorf("failed to start monitoring server: %w", err)
 	}
 
 	return nil
 }
 
-// --- Вспомогательные методы для удобства ---
-
-// IncOperationCounter увеличивает счетчик операций для конкретного имени операции.
-func (m *ServiceMetrics) IncOperationCounter(operationName string) {
-	// 'counterVec' теперь имеет корректный тип *prometheus.CounterVec
-	if counterVec, ok := m.OperationCounters["operations_total"]; ok {
-		counterVec.WithLabelValues(operationName).Inc()
-	}
-}
-
-// ObserveOperationDuration записывает длительность операции в гистограмму.
-func (m *ServiceMetrics) ObserveOperationDuration(operationName string, duration time.Duration) {
-	// 'histogramVec' теперь имеет корректный тип *prometheus.HistogramVec
-	if histogramVec, ok := m.OperationDurations["operation_duration_seconds"]; ok {
-		histogramVec.WithLabelValues(operationName).Observe(duration.Seconds())
-	}
-}
-
-// IncErrorCounter увеличивает счетчик ошибок для конкретного типа ошибки.
-func (m *ServiceMetrics) IncErrorCounter(errorType string) {
-	// 'counterVec' теперь имеет корректный тип *prometheus.CounterVec
-	if counterVec, ok := m.ErrorCounters["errors_total"]; ok {
-		counterVec.WithLabelValues(errorType).Inc()
-	}
-}
-
-// SetGauge устанавливает значение для gauge-метрики.
-func (m *ServiceMetrics) SetGauge(gaugeName string, value float64) {
-	if gauge, ok := m.ServiceGauges[gaugeName]; ok {
-		gauge.Set(value)
-	}
+// ObserveOperation - вспомогательная функция для удобного обновления метрик.
+// Сервисы могут использовать ее, чтобы не дублировать код.
+func ObserveOperation(operation string, status string, start time.Time) {
+	OperationDuration.WithLabelValues(operation).Observe(time.Since(start).Seconds())
+	OperationCount.WithLabelValues(operation, status).Inc()
 }

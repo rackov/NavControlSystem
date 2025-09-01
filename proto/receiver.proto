@@ -1,93 +1,59 @@
+// Синтаксис Protocol Buffers v3
 syntax = "proto3";
 
-package proto;
+// Пакет для Go
+package receiver;
+option go_package = "github.com/rackov/NavControlSystem/proto";
 
-option go_package = "NavControlSystem/proto";
+// Импортируем общие структуры
+import "google/protobuf/empty.proto";
 
-// Импортируем общие определения и стандартные типы
-import "service.proto";
-import "google/protobuf/wrappers.proto"; // <-- ИМПОРТ ДЛЯ Int32Value
-
-// Сервис управления RECEIVER'ом
-service ReceiverControl {
-  // Устанавливаем уровень логирования, используя общий запрос/ответ
-  rpc SetLogLevel(proto.SetLogLevelRequest) returns (proto.SetLogLevelResponse);
-
-  // Получить статус сервиса
-  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
-
-  // Получить количество активных подключений
-  rpc GetActiveConnectionsCount(GetClientsRequest) returns (google.protobuf.Int32Value);
-
-  // Получить список подключенных клиентов
-  rpc GetConnectedClients(GetClientsRequest) returns (GetClientsResponse);
-
-  // Отключить клиента
-  rpc DisconnectClient(DisconnectClientRequest) returns (DisconnectClientResponse);
-
-    // Открыть порт (сделать active=true)
-  rpc OpenPort(PortIdentifier) returns (PortOperationResponse);
-
-  // Закрыть порт (сделать active=false)
-  rpc ClosePort(PortIdentifier) returns (PortOperationResponse);
-
-  // Добавить новый порт в конфигурацию (изначально неактивен)
-  rpc AddPort(PortDefinition) returns (PortOperationResponse);
-
-  // Удалить порт из конфигурации
-  rpc DeletePort(PortIdentifier) returns (PortOperationResponse);
+// Сервис для управления портами приемника данных
+service ReceiverService {
+  // Создает новый порт с конфигурацией, но не открывает его.
+  rpc CreatePort(CreatePortRequest) returns (PortResponse);
+  // Удаляет порт. Если он был открыт, он будет закрыт.
+  rpc DeletePort(DeletePortRequest) returns (google.protobuf.Empty);
+  // Открывает ранее созданный порт для приема данных.
+  rpc OpenPort(OpenPortRequest) returns (PortResponse);
+  // Закрывает открытый порт, отключая всех клиентов.
+  rpc ClosePort(ClosePortRequest) returns (PortResponse);
+  // Возвращает список всех сконфигурированных портов и их статус.
+  rpc ListPorts(google.protobuf.Empty) returns (ListPortsResponse);
 }
 
-
-
-message GetStatusRequest {}
-
-message GetStatusResponse {
-  bool nats_connected = 1;
-  repeated PortStatus ports = 2;
+// Запрос на создание порта
+message CreatePortRequest {
+  uint32 port_number = 1;          // Номер TCP порта для прослушивания
+  string protocol = 2;             // Протокол (ARNAVI, EGTS, NDTP)
+  string nats_topic = 3;           // Топик NATS для публикации данных
 }
 
-message PortStatus {
-  string id = 1;      //  Уникальный ID порта
-  string name = 2;    // "EGTS", "Arnavi", "NDTP"
-  int32 port = 3;     // Номер порта
-  bool is_open = 4;   // Открыт ли порт сейчас
+// Запрос на удаление порта
+message DeletePortRequest {
+  uint32 port_number = 1;
 }
 
-message GetClientsRequest {
-  string protocol_name = 1;
+// Запрос на открытие порта
+message OpenPortRequest {
+  uint32 port_number = 1;
 }
 
-message ClientInfo {
-  string id = 1;
-  string address = 2;
-  int64 connected_since = 3;
+// Запрос на закрытие порта
+message ClosePortRequest {
+  uint32 port_number = 1;
 }
 
-message GetClientsResponse {
-  repeated ClientInfo clients = 1;
+// Ответ с информацией о порте
+message PortResponse {
+  uint32 port_number = 1;
+  string protocol = 2;
+  string nats_topic = 3;
+  string status = 4; // CREATED, OPEN, CLOSED, ERROR
+  string message = 5; // Дополнительное сообщение (например, об ошибке)
 }
 
-message DisconnectClientRequest {
-  string protocol_name = 1;
-  string client_address = 2;
-}
-
-message DisconnectClientResponse {
-  bool success = 1;
-}
-
-message PortIdentifier {
-  string id = 1; // Уникальный ID порта
-}
-
-message PortDefinition {
-  string name = 1; // Имя протокола (EGTS, ARNAVI, NDTP)
-  int32 port = 2;  // Номер порта
-}
-
-message PortOperationResponse {
-  bool success = 1;
-  string message = 2; // Описание результата или ошибки
-  PortDefinition port_details = 3; // Детали созданного/измененного порта
+// Ответ со списком портов
+message ListPortsResponse {
+  repeated PortResponse ports = 1;
 }

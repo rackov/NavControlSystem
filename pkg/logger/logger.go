@@ -1,25 +1,22 @@
+// NavControlSystem/pkg/logger/logger.go
 package logger
 
 import (
-	"io"
+	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"sync"
 
 	"github.com/sirupsen/logrus"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-// Уровни логирования, соответствующие logrus
-const (
-	TRACE = logrus.TraceLevel
-	DEBUG = logrus.DebugLevel
-	INFO  = logrus.InfoLevel
-	WARN  = logrus.WarnLevel
-	ERROR = logrus.ErrorLevel
-)
-
+// Logger - это наша основная структура, которая инкапсулирует logrus и lumberjack.
+// Мы экспортируем ее, чтобы пользователь мог работать с экземпляром.
 type Logger struct {
-	*logrus.Logger
+	*logrus.Logger                    // Встраиваем стандартный логгер logrus
+	fileHook       *lumberjack.Logger // Сохраняем ссылку на lumberjack для доступа к Sync()
 }
 
 var (
@@ -27,121 +24,100 @@ var (
 	once          sync.Once
 )
 
-// New создает и настраивает новый экземпляр логгера.
-// filePath - путь к файлу для записи логов. Если пустой, логи пишутся только в stdout.
-func New(level logrus.Level, filePath ...string) *Logger {
-	l := logrus.New()
-
-	l.SetFormatter(&logrus.TextFormatter{
-		DisableColors:   true,
-		FullTimestamp:   true,
-		TimestampFormat: "2006-01-02 15:04:05",
-	})
-
-	l.SetOutput(os.Stdout)
-	l.SetLevel(level)
-
-	if len(filePath) > 0 && filePath[0] != "" {
-		l.SetFormatter(&logrus.JSONFormatter{ //TextFormatter{
-			// DisableColors:   true,
-			//  FullTimestamp:   true,
-			TimestampFormat: "2006-01-02 15:04:05",
-		})
-		multiWriter := io.MultiWriter(os.Stdout, &lumberjack.Logger{
-			Filename:   filePath[0],
-			MaxSize:    100,
-			MaxBackups: 3,
-			MaxAge:     28,
-			Compress:   true,
-		})
-		l.SetOutput(multiWriter)
-	}
-
-	return &Logger{l}
+// Config содержит все необходимые настройки для инициализации логгера.
+type Config struct {
+	LogLevel    string `toml:"log_level"`
+	LogFilePath string `toml:"log_file_path"`
+	MaxSize     int    `toml:"max_size"`
+	MaxBackups  int    `toml:"max_backups"`
+	MaxAge      int    `toml:"max_age"`
+	Compress    bool   `toml:"compress"`
 }
 
-// Init инициализирует глобальный логгер-синглтон.
-// Ее нужно вызвать один раз при старте приложения.
-func Init(level logrus.Level, filePath ...string) {
+// NewLogger создает и возвращает новый настроенный экземпляр Logger.
+// Это основная функция для создания логгера.
+func NewLogger(cfg Config) (*Logger, error) {
+	var l *Logger
+	var err error
+
 	once.Do(func() {
-		defaultLogger = New(level, filePath...)
+		// 1. Создаем lumberjack для ротации логов
+		fileHook := &lumberjack.Logger{
+			Filename:   cfg.LogFilePath,
+			MaxSize:    cfg.MaxSize,    // megabytes
+			MaxBackups: cfg.MaxBackups, // files
+			MaxAge:     cfg.MaxAge,     // days
+			Compress:   cfg.Compress,   // compress
+		}
+
+		// 2. Создаем стандартный логгер logrus
+		baseLogger := logrus.New()
+
+		// 3. Устанавливаем уровень логирования
+		level, err := logrus.ParseLevel(cfg.LogLevel)
+		if err != nil {
+			level = logrus.InfoLevel
+			fmt.Fprintf(os.Stderr, "Failed to parse log level '%s', defaulting to 'info'. Error: %v\n", cfg.LogLevel, err)
+		}
+		baseLogger.SetLevel(level)
+
+		// 4. Устанавливаем форматтер
+		baseLogger.SetFormatter(&logrus.JSONFormatter{
+			TimestampFormat: "2006-01-02 15:04:05",
+			CallerPrettyfier: func(frame *runtime.Frame) (function string, file string) {
+				return "", fmt.Sprintf("%s:%d", filepath.Base(frame.File), frame.Line)
+			},
+		})
+		baseLogger.SetReportCaller(true)
+
+		// 5. Устанавливаем вывод. lumberjack будет основным.
+		// Можно добавить вывод в консоль для разработки, раскомментировав строку ниже.
+		// baseLogger.SetOutput(io.MultiWriter(fileHook, os.Stdout))
+		baseLogger.SetOutput(fileHook)
+
+		// 6. Создаем наш экземпляр Logger
+		l = &Logger{
+			Logger:   baseLogger,
+			fileHook: fileHook,
+		}
+
+		defaultLogger = l // Сохраняем как "логгер по умолчанию"
 	})
+
+	if l == nil {
+		return nil, fmt.Errorf("failed to initialize logger after Do block")
+	}
+	return l, err
 }
 
-// ParseLevel преобразует строку в logrus.Level.
-func ParseLevel(levelStr string) (logrus.Level, error) {
+// Sync сбрасывает буферы на диск. Реализует интерфейс syncer.
+// Теперь это метод нашего Logger, что делает API последовательным.
+func (l *Logger) Close() error {
+	if l.fileHook != nil {
+		return l.fileHook.Close()
+	}
+	return nil
+}
+
+// SetLevel динамически изменяет уровень логирования.
+// Также сделано методом для работы с экземпляром.
+func (l *Logger) SetLevel(levelStr string) error {
 	level, err := logrus.ParseLevel(levelStr)
 	if err != nil {
-		return DEBUG, err // Возвращаем уровень по умолчанию в случае ошибки
+		return fmt.Errorf("invalid log level '%s': %w", levelStr, err)
 	}
-	return level, nil
-}
-
-// --- Методы для установки уровня ---
-
-// SetLevel динамически меняет уровень логирования
-func (l *Logger) SetLevel(level logrus.Level) {
 	l.Logger.SetLevel(level)
+	l.Infof("Log level changed to %s", level.String())
+	return nil
 }
 
-// SetGlobalLevel устанавливает уровень для глобального логгера
-func SetGlobalLevel(level logrus.Level) {
-	defaultLogger.SetLevel(level)
-}
-
-// --- Глобальные функции-хелперы для удобства ---
-
-// Они вызывают методы у глобального экземпляра defaultLogger
-func WithField(key string, value interface{}) *logrus.Entry {
-	return defaultLogger.WithField(key, value)
-}
-func WithFields(fields logrus.Fields) *logrus.Entry {
-	return defaultLogger.WithFields(fields)
-}
-func WithError(err error) *logrus.Entry {
-	return defaultLogger.WithError(err)
-}
-func Trace(args ...interface{}) {
-	defaultLogger.Trace(args...)
-}
-func Tracef(format string, args ...interface{}) {
-	defaultLogger.Tracef(format, args...)
-}
-func Info(args ...interface{}) {
-	defaultLogger.Info(args...)
-}
-
-func Debug(args ...interface{}) {
-	defaultLogger.Debug(args...)
-}
-
-func Warn(args ...interface{}) {
-	defaultLogger.Warn(args...)
-}
-
-func Error(args ...interface{}) {
-	defaultLogger.Error(args...)
-}
-
-func Infof(format string, args ...interface{}) {
-	defaultLogger.Infof(format, args...)
-}
-
-func Debugf(format string, args ...interface{}) {
-	defaultLogger.Debugf(format, args...)
-}
-
-func Warnf(format string, args ...interface{}) {
-	defaultLogger.Warnf(format, args...)
-}
-
-func Errorf(format string, args ...interface{}) {
-	defaultLogger.Errorf(format, args...)
-}
-
-// GetLogger возвращает экземпляр глобального логгера.
-// Это может быть полезно, если какой-то компонент хочет получить
-// прямой доступ к логгеру, а не использовать глобальные функции.
-func GetLogger() *Logger {
+// Default возвращает "логгер по умолчанию".
+// Полезно, если не хочется передавать логгер через всю иерархию вызовов.
+func Default() *Logger {
+	if defaultLogger == nil {
+		// Можно вернуть логгер с настройками по умолчанию, если он еще не был создан
+		// или паниковать, это зависит от политики проекта.
+		panic("Logger not initialized. Call NewLogger first.")
+	}
 	return defaultLogger
 }

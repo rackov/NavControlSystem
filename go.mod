@@ -13,9 +13,9 @@ replace github.com/rackov/NavControlSystem/pkg/monitoring => ./pkg/monitoring
 require (
 	github.com/BurntSushi/toml v1.5.0
 	github.com/golang/protobuf v1.5.4
-	github.com/google/uuid v1.6.0
 	github.com/nats-io/nats.go v1.45.0
 	github.com/rackov/NavControlSystem/pkg/logger v0.0.0-00010101000000-000000000000
+	github.com/rackov/NavControlSystem/pkg/models v0.0.0-00010101000000-000000000000
 	github.com/rackov/NavControlSystem/pkg/monitoring v0.0.0-00010101000000-000000000000
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.11.0

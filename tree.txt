@@ -1,0 +1,185 @@
+navigation-system/
+├── .gitignore
+├── go.mod
+├── go.sum
+├── Makefile                  # Файл для автоматизации сборки, тестирования, запуска и т.д.
+├── configs                   # Глобальные конфигурации, если они есть (например, для docker-compose)
+│   └── ...
+│
+├── pkg                       # "Public" код, который может быть переиспользован разными сервисами
+│   ├── config               # Пакет для загрузки и валидации конфигурации
+│   │   └── config.go        # Общие структуры конфига (например, для логирования, мониторинга)
+│   │
+│   ├── logger               # Пакет для централизованного логирования
+│   │   ├── logger.go        # Инициализирует логгер (zap, logrus или slog)
+│   │   └── level.go         # Логика для динамического изменения уровня логирования
+│   │
+│   ├── models               # Общие модели данных, используемые в разных сервисах
+│   │   ├── navrecord.go     # Унифицированная структура навигационной записи
+│   │   └── command.go       # Унифицированная структура команды для устройства
+│   │
+│   ├── monitoring           # Пакет для Prometheus метрик
+│   │   ├── metrics.go       # Определение общих метрик (например, RequestDuration)
+│   │   └── server.go        # HTTP-сервер для экспорта метрик на /metrics
+│   │
+│   ├── postgres             # Общий код для работы с PostgreSQL
+│   │   ├── connect.go       # Функция для подключения к БД
+│   │   ├── migrations/      # Скрипты миграций базы данных
+│   │   └── queries/         # SQL-запросы или сгенерированный код (sqlc, gorm-gen)
+│   │
+│   └── nats                 # Общий код для работы с NATS
+│       ├── connect.go       # Функция для подключения к NATS
+│       ├── publisher.go     # Обертка для публикации сообщений
+│       └── subscriber.go    # Обертка для подписки на сообщения
+│
+├── proto                     # Описание gRPC сервисов и сообщений
+│   ├── service.proto        # Определяет общий gRPC-сервис управления (для Rest API)
+│   │                        # (методы: SetLogLevel, GetStatus, SendCommandToDevice)
+│   ├── receiver.proto       # Определяет gRPC-сервис, который реализует RECEIVER
+│   │                        # (методы: OpenPort, ClosePort, GetActiveConnections)
+│   ├── writer.proto         # Определяет gRPC-сервис, который реализует WRITER
+│   │                        # (методы: SetLogLevel, GetStats)
+│   └── retranslator.proto   # Определяет gRPC-сервис, который реализует RETRANSLATOR
+│                            # (методы: StartRetranslation, StopRetranslation)
+│
+└── services                  # Каталог с исходным кодом каждого микросервиса
+    │
+    ├── receiver             # Микросервис приема данных
+    │   ├── cmd              # Точка входа в приложение
+    │   │   ├── main.go      # Инициализация конфига, логгера, метрик, запуск gRPC и TCP серверов
+    │   │   ├── config.go    # Структура конфигурации конкретно для receiver
+    │   │   └── server.go    # Запуск и управление жизненным циклом TCP-серверов
+    │   │
+    │   ├── internal         # "Private" код, не используемый другими сервисами
+    │   │   ├── connectionmanager
+    │   │   │   └── manager.go # Управление активными TCP-соединениями
+    │   │   │
+    │   │   ├── handler      # Реализация логики для каждого протокола
+    │   │   │   ├── arnavi
+    │   │   │   │   ├── handler.go    # Реализация интерфейса ProtocolHandler для Arnavi
+    │   │   │   │   └── parsing.go    # Логика парсинга пакетов Arnavi
+    │   │   │   ├── egts
+    │   │   │   │   ├── handler.go    # Реализация интерфейса ProtocolHandler для EGTS
+    │   │   │   │   └── parsing.go    # Логика парсинга пакетов EGTS
+    │   │   │   └── ndtp
+    │   │   │       └── handler.go    # Реализация интерфейса ProtocolHandler для NDTP
+    │   │   │
+    │   │   ├── protocol     # Определение общего интерфейса для обработчиков протоколов
+    │   │   │   └── handler.go        # interface ProtocolHandler { Parse(data []byte), SendCommand(cmd []byte) }
+    │   │   │
+    │   │   └── grpc         # Реализация gRPC-сервера для управления
+    │   │       └── service.go       # Имплементация методов из receiver.proto
+    │   │
+    │   └── configs          # Конфигурационные файлы для этого сервиса
+    │       └── receiver.toml
+    │
+    ├── rest-api             # Микросервис Rest API
+    │   ├── cmd
+    │   │   └── main.go      # Запуск HTTP и gRPC серверов
+    │   │
+    │   ├── internal
+    │   │   ├── http         # Обработчики HTTP запросов
+    │   │   │   └── handlers.go # POST /v1/loglevel, POST /v1/command и т.д.
+    │   │   │
+    │   │   ├── grpc         # gRPC-клиенты для общения с другими сервисами
+    │   │   │   ├── receiver_client.go
+    │   │   │   ├── writer_client.go
+    │   │   │   └── retranslator_client.go
+    │   │   │
+    │   │   └── service      # Бизнес-логика
+    │   │       └── api_service.go # Слой, который оркеструет вызовы gRPC-клиентов
+    │   │
+    │   └── configs
+    │       └── rest-api.toml
+    │
+    ├── writer               # Микросервис записи в БД
+    │   ├── cmd
+    │   │   └── main.go      # Запуск gRPC сервера, подписка на NATS
+    │   │
+    │   ├── internal
+    │   │   ├── nats         # Логика подписки и обработки сообщений из NATS
+    │   │   │   └── subscriber.go
+    │   │   │
+    │   │   ├── postgres     # Логика записи данных в PostgreSQL
+    │   │   │   └── writer.go
+    │   │   │
+    │   │   └── grpc         # Реализация gRPC-сервера для управления
+    │   │       └── service.go
+    │   │
+    │   └── configs
+    │       └── writer.toml
+    │
+    └── retranslator         # Микросервис ретрансляции
+        ├── cmd
+        │   └── main.go      # Запуск gRPC сервера и планировщика задач
+        │
+        ├── internal
+        │   ├── scheduler    # Логика планирования задач ретрансляции (например, по cron)
+        │   │   └── scheduler.go
+        │   │
+        │   ├── postgres     # Логика чтения данных из PostgreSQL
+        │   │   └── reader.go
+        │   │
+        │   ├── sender       # Логика отправки данных на внешние сервера
+        │   │   └── http_sender.go (или tcp_sender.go)
+        │   │
+        │   └── grpc         # Реализация gRPC-сервера для управления
+        │       └── service.go
+        │
+        └── configs
+            └── retranslator.toml
+
+Детальный разбор и обоснование структуры
+Корневой уровень
+go.mod, go.sum: Стандартные файлы для управления зависимостями Go-модуля.
+Makefile: Крайне рекомендуется. Он позволяет автоматизировать рутинные операции:
+make build: Собрать все сервисы.
+make run-receiver: Запустить сервис receiver.
+make generate: Сгенерировать Go-код из .proto файлов.
+make test: Запустить все тесты.
+make docker-build: Собрать Docker-образы.
+configs/: Здесь могут лежать конфиги для оркестраторов (например, docker-compose.yml) или глобальные настройки, если они есть.
+Пакет pkg (Public Libraries)
+Это сердце переиспользуемого кода. Все, что здесь лежит, не должно зависеть от конкретной реализации сервисов. Сервисы (services/*) будут импортировать пакеты из pkg.
+
+pkg/config: Отличное решение. Здесь можно определить общие для всех сервисов части конфигурации, например, структуру для секции логирования или мониторинга. Каждый сервис в своем cmd/config.go будет встраивать эти общие структуры в свою основную структуру конфига.
+pkg/logger: Ключевой компонент для выполнения требования "динамическое изменение уровня логирования".
+logger.go: Предоставляет функцию NewLogger(cfg LoggerConfig), которая возвращает настроенный экземпляр логгера (например, от zap или стандартного slog в Go 1.21+).
+level.go: Здесь может быть мапа уровней (string -> zapcore.Level) и, что важно, потокобезопасный способ изменить уровень у уже созданного логгера. Rest API будет вызывать метод из этого пакета, который изменит уровень у глобального логгера.
+pkg/models: Важно для унификации.
+navrecord.go: Определяет одну общую структуру данных (например, NavigationRecord), в которую RECEIVER будет конвертировать данные из любого протокола (Arnavi, EGTS, NDTP) перед отправкой в NATS. Это упрощает WRITER и RETRANSLATOR — им нужно работать только с одним форматом.
+command.go: Аналогично для команд от сервера к устройству.
+pkg/monitoring: Централизация метрик.
+metrics.go: Здесь определяются общие метрики через библиотеку prometheus/client_golang. Например, RequestDuration или ErrorsTotal.
+server.go: Простой HTTP-сервер, который каждый сервис будет запускать в отдельной горутине для экспонирования метрик на /metrics. Это избавляет от дублирования кода.
+pkg/postgres и pkg/nats: Отличное решение для DRY (Don't Repeat Yourself).
+connect.go: Функции ConnectPostgres(dsn string) (*sql.DB, error) и ConnectNats(url string) (*nats.Conn, error). Все сервисы будут использовать их для установки соединений.
+migrations/: Место для файлов миграций (например, с использованием golang-migrate).
+queries/: Если вы используете sqlc или gorm-gen, здесь будет лежать сгенерированный типобезопасный код для работы с БД.
+Пакет proto
+Отлично, что вы разделяете .proto файлы. Это делает систему более модульной.
+
+service.proto: Это "контракт" для Rest API. Он определяет один gRPC-сервис (например, ManagementService), который Rest API будет вызывать для управления всеми остальными сервисами. Это позволяет Rest API не знать о внутренней структуре других сервисов, а общаться с ними через единый интерфейс.
+receiver.proto, writer.proto, retranslator.proto: Каждый сервис определяет свой собственный gRPC-сервис с методами, которые он готов предоставлять для управления. Например, receiver.proto может содержать сервис ReceiverService с методом GetActiveConnections.
+Пакет services
+Здесь живет код каждого микросервиса. Структура cmd/internal является стандартной и очень хорошей практикой в Go-сообществе.
+
+cmd: Точка входа. Здесь происходит вся "магия" инициализации.
+main.go: Читает флаги командной строки (путь к конфигу), загружает конфиг, инициализирует логгер, метрики, подключается к БД/NATS, запускает gRPC и другие серверы. Он должен быть максимально простым.
+config.go: Определяет структуру конфигурации для этого конкретного сервиса (например, ReceiverConfig), включая порты, адреса БД/NATS, и т.д.
+internal: Весь код, который не должен быть импортирован извне. Это внутренняя кухня сервиса.
+Для receiver:
+internal/protocol/handler.go: Определение интерфейса type ProtocolHandler interface { Parse(data []byte) (*pkg.models.NavigationRecord, error) }. Каждый обработчик (arnavi, egts, ndtp) должен его реализовать. Это позволяет легко добавлять новые протоколы.
+internal/handler/...: Конкретные реализации. Они содержат всю сложную логику парсинга бинарных данных.
+internal/connectionmanager/manager.go: Управляет пулом активных соединений, привязанных к ID устройства. Необходим для отправки команд обратно на устройство.
+internal/grpc/service.go: Здесь реализуются методы из receiver.proto. Например, метод SetLogLevel будет вызывать pkg.logger.SetLevel(...), а метод SendCommand будет искать соединение в connectionmanager и отправлять данные.
+Для rest-api:
+internal/http/handlers.go: HTTP-обработчики. Они принимают JSON, валидируют его и вызывают методы из internal/service/api_service.go.
+internal/service/api_service.go: Здесь находится бизнес-логика. Этот слой будет содержать в себе gRPC-клиенты (сгенерированные из .proto файлов) для receiver, writer, retranslator и вызывать их методы. Например, APIService.SetLogLevel(serviceName, level) будет решать, какому gRPC-клиенту отправить команду.
+Для writer:
+internal/nats/subscriber.go: Подписывается на NATS, получает сообщение, десериализует его в pkg.models.NavigationRecord и передает в postgres.Writer.
+internal/postgres/writer.go: Принимает навигационную запись и выполняет SQL-запрос на вставку. Использует код из pkg/postgres.
+Для retranslator:
+internal/scheduler/scheduler.go: Использует библиотеку типа robfig/cron для периодического запуска задач ретрансляции.
+internal/postgres/reader.go: По расписанию от scheduler читает неотправленные данные из PostgreSQL.
+internal/sender/http_sender.go: Получает данные от reader и отправляет их на внешний сервер через HTTP POST.
