@@ -10,7 +10,6 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/rackov/NavControlSystem/pkg/logger"
-	"github.com/rackov/NavControlSystem/pkg/monitoring"
 	"github.com/rackov/NavControlSystem/proto"
 	"github.com/rackov/NavControlSystem/services/receiver/configs"
 	"github.com/rackov/NavControlSystem/services/receiver/internal/portmanager"
